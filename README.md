@@ -3,35 +3,7 @@
 Ce guide détaille les étapes pour installer ou réinstaller Windows 11 de manière propre, optimisée et sans risques de tout casser à cause des optimisations.
 
 **⚠️ Avertissement :**
-Suivre ce guide attentivement. Ces manipulations sont effectuées sous votre propre responsabilité. Penser à sauvegarder vos données importantes avant toute réinstallation.
-
----
-
-## 📜 Table des Matières
-
-1.  [🛠️ Préparation](#️-préparation)
-    *   [1.1 Sauvegardes (Si Réinstallation)](#11-sauvegardes-si-réinstallation)
-    *   [1.2 Création du Support d'Installation de Windows 11](#12-création-du-support-dinstallation-de-windows-11)
-    *   [1.3 Ajout du Fichier `autounattend.xml`](#13-ajout-du-fichier-autounattendxml)
-2.  [🚀 Installation de Windows 11](#-installation-de-windows-11)
-3.  [✨ Post-Installation et Optimisations](#-post-installation-et-optimisations)
-    *   [3.1 🔄 Mises à Jour Windows Update](#31--mises-à-jour-windows-update)
-    *   [3.2 🌐 Installation et Configuration du Navigateur](#32--installation-et-configuration-du-navigateur)
-    *   [3.3 🧩 Mise à Jour des Pilotes (Général)](#33--mise-à-jour-des-pilotes-général)
-    *   [3.4 🚗 Installation et Configuration des Pilotes Graphiques](#34--installation-et-configuration-des-pilotes-graphiques)
-    *   [3.5 ⚡ Mode de Gestion d'Alimentation (PC Fixe Uniquement)](#35--mode-de-gestion-dalimentation-pc-fixe-uniquement)
-    *   [3.6 🔧 Optimisations des Paramètres Windows](#36--optimisations-des-paramètres-windows)
-    *   [3.7 📚 Installation des Bibliothèques C++](#37--installation-des-bibliothèques-c)
-    *   [3.8 📦 Installation Rapide d'Applications (Ninite)](#38--installation-rapide-dapplications-ninite)
-    *   [3.9 📜 Optimisations via Script (`script_parametres.ps1`)](#39--optimisations-via-script-script_parametresps1)
-    *   [3.10 🖥️ Désactivation de la Virtual Machine Platform (Conditionnel)](#310-️-désactivation-de-la-virtual-machine-platform-conditionnel)
-    *   [3.11 ⚙️ Configuration des Services (`msconfig`)](#311-️-configuration-des-services-msconfig)
-    *   [3.12 🧹 Nettoyage Final](#312--nettoyage-final)
-4.  [👍 Bonnes Pratiques](#-bonnes-pratiques)
-5.  [💡 Optionnel](#-optionnel)
-    *   [5.1 Activer le Profil XMP/EXPO dans le BIOS](#51-activer-le-profil-xmpexpo-dans-le-bios)
-    *   [5.2 Utiliser Autoruns pour Gérer les Démarrages](#52-utiliser-autoruns-pour-gérer-les-démarrages)
-    *   [5.3 Installer et Configurer WSL2 (Windows Subsystem for Linux)](#53-installer-et-configurer-wsl2-windows-subsystem-for-linux)
+Suivez ce guide attentivement. Ces manipulations sont effectuées sous votre responsabilité. Pensez à sauvegarder vos données importantes avant toute réinstallation.
 
 ---
 
