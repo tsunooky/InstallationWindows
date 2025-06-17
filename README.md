@@ -1,6 +1,6 @@
-# Installation / Réinstallation Propre et Optimisée de Windows 11
+# Installation propre et optimisée de Windows 11 (FR)
 
-Ce guide détaille les étapes pour installer ou réinstaller Windows 11 de manière propre, optimisée et sans risques de tout casser à cause des optimisations.
+Ce guide détaille les étapes pour installer ou réinstaller Windows 11 de manière propre, optimisée et sans risques de tout casser en faisant des manipulation dangereuses.
 
 **⚠️ Avertissement :**
 Suivez ce guide attentivement. Ces manipulations sont effectuées sous votre responsabilité. Pensez à sauvegarder vos données importantes avant toute réinstallation.
@@ -9,28 +9,25 @@ Suivez ce guide attentivement. Ces manipulations sont effectuées sous votre res
 
 ## 1. 🛠️ Préparation
 
-### 1.1 Sauvegardes (Si Réinstallation)
+### 1.1 Sauvegarde (si réinstallation)
 
-Si réinstallation sur un PC déjà utilisé :
-
-*   **Sauvegarder les fichiers importants** sur un support externe.
-*   **Sauvegarder la clé d'installation Windows** (si non liée au compte Microsoft ou firmware) :
-    1.  Ouvrir **Windows Terminal** (admin).
-    2.  Exécuter :
+*   **Sauvegarder tous les fichiers importants** sur un support externe.
+*   **Sauvegarder la clé d'installation de Windows** :
+    1.  Ouvrir **Windows Terminal** (admin) et exécuter :
         ```powershell
         (Get-WmiObject -query 'select * from SoftwareLicensingService').OA3xOriginalProductKey
         ```
-    3.  Copier et conserver la clé.
+    2.  Copier et conserver la clé.
 
 ### 1.2 Création du Support d'Installation de Windows 11
 
-0.  **Sauvegarder les fichiers importants** de la clé USB utilisée sur un autre support externe.
-1.  Télécharger l'outil de création de support Microsoft :
+1.  Prendre une clé USB d'au minimum 8GB puis **sauvegarder les fichiers importants** de la clé sur un autre support externe.
+2.  Télécharger l'outil de création de support Microsoft :
     [https://www.microsoft.com/fr-fr/software-download/windows11](https://www.microsoft.com/fr-fr/software-download/windows11)
     (Option "Création d'un support d'installation de Windows 11").
-2.  Lancer l'outil et accepter les termes.
-3.  Choisir "Disque mémoire flash USB".
-4.  Sélectionner la clé USB (8Go min, le contenu de la clé sera effacée).
+3.  Lancer l'outil et accepter les termes.
+4.  Choisir "Disque mémoire flash USB".
+5.  Sélectionner la clé USB (8Go min, le contenu de la clé sera effacée).
 
 ### 1.3 Ajout du Fichier `autounattend.xml`
 
@@ -38,6 +35,11 @@ Le fichier `autounattend.xml` présent dans ce repository automatise de nombreus
 
 1.  Télécharger `autounattend.xml` depuis ce repository GitHub.
 2.  Copier `autounattend.xml` **à la racine** de la clé USB d'installation.
+
+### 1.4 Débrancher les Autres Disques (PC Fixe Uniquement)
+
+Dans le cas où vous possédez plusieurs disques sur votre PC fixe, débrancher tout ceux qui ne sont pas celui sur lequel vous installez Windows.
+
 
 ---
 
@@ -50,6 +52,7 @@ Le fichier `autounattend.xml` présent dans ce repository automatise de nombreus
 5.  L'installation de Windows 11 démarre. Suivre les instructions pour le choix de la partition et le nom de l'ordinateur.
 6.  **IMPORTANT :** Lors du premier redémarrage automatique après la copie des fichiers (compte à rebours de 10s), **retirer la clé USB**.
 7.  Terminer l'installation.
+8.  Rébrancher les autres disques (PC Fixe Uniquement)
 
 ---
 
@@ -102,7 +105,7 @@ Le fichier `autounattend.xml` présent dans ce repository automatise de nombreus
 2.  Installer, lancer analyse, cliquer **"Afficher la configuration en ligne"**.
 3.  Prioriser les **pilotes de la carte mère** (chipset, audio, LAN). Télécharger depuis le site du fabricant (carte mère ou PC portable).
 
-### 3.4 🚗 Installation et Configuration des Pilotes Graphiques
+### 3.4 ⚙️ Installation et Configuration des Pilotes Graphiques
 
 #### 3.4.1 Cartes NVIDIA
 
@@ -231,10 +234,9 @@ Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
 
 ### 3.10 🖥️ Désactivation de la Virtual Machine Platform (Conditionnel)
 
-Si **A faire seulement si n'est pas utilisé :** virtualisation, Hyper-V, WSL2, émulateurs Android (WSA).
+⚠️ **A faire seulement si n'est pas utilisé :** WSL2, virtualisation, Hyper-V, émulateurs Android (WSA, Bluestack...).
 
-1.  Ouvrir **Windows Terminal** (admin).
-2.  Exécuter :
+Ouvrir **Windows Terminal** (admin) et Exécuter : 
     ```powershell
     DISM /Online /Disable-Feature /FeatureName:VirtualMachinePlatform /NoRestart
     ```
