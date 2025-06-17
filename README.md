@@ -238,7 +238,6 @@ Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
     # Desactiver SysMain (Superfetch)
     sc.exe stop "SysMain"
     sc.exe config "SysMain" start=disabled
-    
     Write-Host "Parametres appliques avec succes." -ForegroundColor Green
     pause
 
