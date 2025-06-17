@@ -165,13 +165,7 @@ Personnaliser l'**Apparence** (Thèmes, Couleurs, Fond d'écran) dans **Personna
 2.  Décompresser.
 3.  Clic droit `install_all.bat` > **"Exécuter en tant qu'administrateur"**.
 
-### 3.8 📦 Installation Rapide d'Applications (Ninite)
-
-1.  Aller sur [https://ninite.com/](https://ninite.com/)
-2.  Cocher les applications souhaitées.
-3.  Télécharger et exécuter l'installeur.
-
-### 3.9 📜 Optimisations de paramètres
+### 3.8 📜 Optimisations de paramètres
 
 Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
 
@@ -232,7 +226,7 @@ Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
     Write-Host "Parametres appliques avec succes." -ForegroundColor Green
     pause
 
-### 3.10 🖥️ Désactivation de la Virtual Machine Platform (Conditionnel)
+### 3.9 🖥️ Désactivation de la Virtual Machine Platform (Conditionnel)
 
 ⚠️ **A faire seulement si n'est pas utilisé :** WSL2, virtualisation, Hyper-V, émulateurs Android (WSA, Bluestack...).
 
@@ -241,7 +235,7 @@ Ouvrir **Windows Terminal** (admin) et Exécuter :
     DISM /Online /Disable-Feature /FeatureName:VirtualMachinePlatform /NoRestart
     ```
 
-### 3.11 ⚙️ Configuration des Services (`msconfig`)
+### 3.10 ⚙️ Configuration des Services (`msconfig`)
 
 Désactiver des services non-Microsoft inutiles. **Attention.**
 
@@ -251,7 +245,7 @@ Désactiver des services non-Microsoft inutiles. **Attention.**
 4.  Décochez les services **CONNUS** non nécessaires.
 5.  **"Appliquer"** > **"OK"**.
 
-### 3.12 🧹 Nettoyage Final
+### 3.11 🧹 Nettoyage Final
 
 1.  **Redémarrer le PC**.
 2.  Vider le dossier **"Téléchargements"**.
