@@ -240,7 +240,7 @@ Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
     sc.exe config "SysMain" start=disabled
     
     Write-Host "Parametres appliques avec succes." -ForegroundColor Green
-    \n
+            
 
 ### 3.10 🖥️ Désactivation de la Virtual Machine Platform (Conditionnel)
 
