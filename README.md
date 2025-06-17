@@ -183,8 +183,7 @@ Personnaliser l'**Apparence** (Thèmes, Couleurs, Fond d'écran) dans **Personna
 ### 3.9 📜 Optimisations de paramètres
 
 Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
-    
-    ```powershell
+
     # Assistant de stockage
     reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy" /v 01 /t REG_DWORD /d 1 /f
     reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy" /v 2002 /t REG_DWORD /d 7 /f
@@ -247,7 +246,6 @@ Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
     
     Write-Host "Parametres appliques avec succes." -ForegroundColor Green
     pause
-    ```
 
 ### 3.10 🖥️ Désactivation de la Virtual Machine Platform (Conditionnel)
 
