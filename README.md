@@ -182,7 +182,8 @@ Personnaliser l'**Apparence** (Thèmes, Couleurs, Fond d'écran) dans **Personna
 
 ### 3.9 📜 Optimisations de paramètres
 
-Ouvrir **Windows Terminal** (admin), et copier puis coller le texte ci-dessous :
+Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
+    
     ```powershell
     # Assistant de stockage
     reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy" /v 01 /t REG_DWORD /d 1 /f
