@@ -103,7 +103,7 @@ Dans le cas où vous possédez plusieurs disques sur votre PC fixe, débrancher 
 
 1.  Télécharger et lancer **UserDiag** : [https://userdiag.com/fr/](https://userdiag.com/fr/)
 2.  Installer, lancer analyse, cliquer **"Afficher la configuration en ligne"**.
-3.  Prioriser les **pilotes de la carte mère** (chipset, audio, LAN). Télécharger depuis le site du fabricant (carte mère ou PC portable).
+3.  Prioriser les **pilotes de la carte mère** (chipset, audio, LAN), pas les utilitaires. Télécharger depuis le site du fabricant (carte mère ou PC portable) en copiant le modèle sur l'interface.
 
 ### 3.4 ⚙️ Installation et Configuration des Pilotes Graphiques
 
