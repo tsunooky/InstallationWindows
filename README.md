@@ -13,7 +13,7 @@ Suivez ce guide attentivement. Ces manipulations sont effectuées sous votre res
 
 Si réinstallation sur un PC déjà utilisé :
 
-*   **Sauvegarder les fichiers importants** sur un disque externe.
+*   **Sauvegarder les fichiers importants** sur un support externe.
 *   **Sauvegarder la clé d'installation Windows** (si non liée au compte Microsoft ou firmware) :
     1.  Ouvrir **Windows Terminal** (admin).
     2.  Exécuter :
@@ -24,13 +24,13 @@ Si réinstallation sur un PC déjà utilisé :
 
 ### 1.2 Création du Support d'Installation de Windows 11
 
+0.  **Sauvegarder les fichiers importants** de la clé USB utilisée sur un autre support externe.
 1.  Télécharger l'outil de création de support Microsoft :
     [https://www.microsoft.com/fr-fr/software-download/windows11](https://www.microsoft.com/fr-fr/software-download/windows11)
     (Option "Création d'un support d'installation de Windows 11").
 2.  Lancer l'outil et accepter les termes.
-3.  Décocher "Utiliser les options recommandées pour ce PC" et séléctionner Langue : "Français (France)".
-4.  Choisir "Disque mémoire flash USB".
-5.  Sélectionner la clé USB (8Go min, le contenu de la clé sera effacée).
+3.  Choisir "Disque mémoire flash USB".
+4.  Sélectionner la clé USB (8Go min, le contenu de la clé sera effacée).
 
 ### 1.3 Ajout du Fichier `autounattend.xml`
 
