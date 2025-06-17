@@ -139,29 +139,19 @@ Ouvrir **Paramètres** :
     *   Décocher `Planification de processeur graphique à accélération matérielle`.
     *   Cocher `Optimisations pour les jeux en fenêtre`.
 *   **Système > Notifications** : Tout désactiver dans chaque catégories.
-*   **Personnalisation > Saisie** :
+*   **Personnalisation > Parametres de saisie** :
     *   Décocher `Corriger automatiquement les fautes d’orthographe`.
     *   Décocher `Mettre en surbrillance les mots mal orthographiés`.
-*   **Personnalisation > Démarrer** : Cocher **"Afficher plus d’éléments épinglés"**.
-*   **Personnalisation > Barre des tâches > Éléments de la barre des tâches** : Décocher tout (Conversation, Widgets, etc.).
-*   **Personnalisation > Utilisation de l’appareil** : Décocher tout.
-*   **Applications > Applications pour les sites web** : Décocher tout.
+*   **Personnalisation > Démarrer** : Cocher **"Autres éléments épinglés"**.
+*   **Personnalisation > Utilisation des appareils** : Décocher tout.
 *   **Applications > Démarrage** : Désactiver les applications inutiles.
-*   **Jeux > Xbox Game Bar** : Décocher l'interrupteur principal.
-*   **Jeux > Mode Jeu** : Cocher (Activé).
+*   **Jeux > Xbox Game Bar** : Décocher.
 *   **Confidentialité et sécurité > Général** : Décocher tout.
 *   **Confidentialité et sécurité > Entrée manuscrite et personnalisation de la saisie** : Décocher.
 *   **Confidentialisation et sécurité > Diagnostics et commentaires** :
-    *   Désactiver `Envoyer des données de diagnostic facultatives`.
     *   `Fréquence des commentaires` > **"Jamais"**.
-    *   Désactiver `Expériences personnalisées`.
-*   **Confidentialité et sécurité > Historique des activités** :
-    *   Décocher `Stocker l’historique...`.
-    *   Cliquer `Effacer l'historique...`.
-*   **Confidentialité et sécurité > Voix** : Désactiver `Reconnaissance vocale en ligne`.
 *   **Confidentialité et sécurité > Autorisations de recherche** :
-    *   `Filtrage du contenu pour adultes` > `Désactivé`.
-    *   Plus bas, désactiver les options de recherche cloud et `Afficher les mots clés de recherche`.
+    *   Tout décocher
 
 Personnaliser l'**Apparence** (Thèmes, Couleurs, Fond d'écran) dans **Personnalisation**.
 
