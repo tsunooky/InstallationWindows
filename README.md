@@ -138,9 +138,7 @@ Ouvrir **Paramètres** :
 *   **Système > Écran > Graphiques > Modifier les paramètres graphiques par défaut** :
     *   Décocher `Planification de processeur graphique à accélération matérielle`.
     *   Cocher `Optimisations pour les jeux en fenêtre`.
-*   **Système > Son > Autres paramètres audio** (ou `Panneau de configuration > Son`) :
-    *   Pour chaque périphérique (lecture/enregistrement) > `Propriétés` > `Améliorations` (ou équivalent) > Cocher **"Désactiver toutes les améliorations"**.
-*   **Système > Notifications** : Désactiver les notifications inutiles.
+*   **Système > Notifications** : Tout désactiver dans chaque catégories.
 *   **Personnalisation > Saisie** :
     *   Décocher `Corriger automatiquement les fautes d’orthographe`.
     *   Décocher `Mettre en surbrillance les mots mal orthographiés`.
