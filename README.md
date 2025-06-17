@@ -184,11 +184,6 @@ Personnaliser l'**Apparence** (Thèmes, Couleurs, Fond d'écran) dans **Personna
 
 Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
 
-    # Assistant de stockage
-    reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy" /v 01 /t REG_DWORD /d 1 /f
-    reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy" /v 2002 /t REG_DWORD /d 7 /f
-    reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy" /v 2004 /t REG_DWORD /d 1 /f
-    reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy" /v 2005 /t REG_DWORD /d 60 /f
     # Amelioration de la precision de la souris
     reg add "HKCU\Control Panel\Mouse" /v MouseSpeed /t REG_SZ /d "0" /f
     reg add "HKCU\Control Panel\Mouse" /v MouseThreshold1 /t REG_SZ /d "0" /f
@@ -245,7 +240,6 @@ Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
     sc.exe config "SysMain" start=disabled
     
     Write-Host "Parametres appliques avec succes." -ForegroundColor Green
-    pause
 
 ### 3.10 🖥️ Désactivation de la Virtual Machine Platform (Conditionnel)
 
