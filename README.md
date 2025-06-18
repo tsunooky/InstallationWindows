@@ -64,7 +64,8 @@ Dans le cas où vous possédez plusieurs disques sur votre PC fixe, débrancher 
 ### 3.2 🌐 Installation et Configuration du Navigateur
 
 1.  Ouvrir **Windows Terminal**.
-2.  Installer un navigateur :
+2.  Installer un navigateur : 
+
     **Firefox** (Recommandé):
     ```powershell
     winget install --id=Mozilla.Firefox -e --accept-package-agreements
@@ -73,11 +74,7 @@ Dans le cas où vous possédez plusieurs disques sur votre PC fixe, débrancher 
     ```powershell
     winget install --id=Google.Chrome -e --accept-package-agreements
     ```
-    **Brave** :
-    ```powershell
-    winget install --id=Brave.Brave -e --accept-package-agreements
-    ```
-3.  Mettre à jour les paquets de toutes les applications :
+4.  Mettre à jour les paquets de toutes les applications :
     ```powershell
     winget upgrade --all --include-unknown --accept-package-agreements
     ```
