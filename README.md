@@ -235,27 +235,27 @@ Ouvrir **Windows Terminal** (admin) et Exécuter :
     DISM /Online /Disable-Feature /FeatureName:VirtualMachinePlatform /NoRestart
     ```
 
-### 3.10 ⚙️ Configuration des Services (`msconfig`)
+### 3.10 ⚙️ Configuration des Services au Démarrage
 
-Désactiver des services non-Microsoft inutiles. **Attention.**
+Après avoir installé toutes vos applications, désactivez les services inutiles au démarrage. **Attention.**
 
-1.  `Win` + `R`, taper `msconfig`, Entrée.
+1. AAAAAAAA
+1.  `Win`, recherchez `Configuration du système`.
 2.  Onglet **"Services"**.
-3.  Cocher **"Masquer tous les services Microsoft"**.
-4.  Décochez les services **CONNUS** non nécessaires.
-5.  **"Appliquer"** > **"OK"**.
+3.  Cocher en bas **"Masquer tous les services Microsoft"**.
+4.  Décochez les services **CONNUS** non nécessaires au démmarage. (Ne décochez pas les services inconnus, la colonne `Fabricant` peut vous aider)
+5.  **"Appliquer"** > **"Redémarrer"**.
 
 ### 3.11 🧹 Nettoyage Final
 
-1.  **Redémarrer le PC**.
-2.  Vider le dossier **"Téléchargements"**.
-3.  `Win`, taper `Nettoyage de disque`, ouvrir.
+1. Vider le dossier **"Téléchargements"**.
+2.  `Win`, recherchez `Nettoyage de disque`.
     *   Sélectionner `C:`.
     *   Cliquer **"Nettoyer les fichiers système"**.
     *   Sélectionner `C:`.
     *   Cocher toutes les cases.
     *   Cliquer **"OK"**.
-4.  Ouvrir **Windows Terminal** (admin), exécuter :
+3.  Ouvrir **Windows Terminal** (admin), exécuter :
     ```powershell
     Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
     ```
@@ -265,9 +265,8 @@ Désactiver des services non-Microsoft inutiles. **Attention.**
 ## 4. 👍 Bonnes Pratiques
 
 *   **Pas de logiciels de "nettoyage/optimisation" tiers** (CCleaner, etc.).
-*   **Pas d'antivirus tiers.** Microsoft Defender suffit.
+*   **Pas d'antivirus**, Microsoft Defender suffit.
 *   **Garder Windows et les pilotes à jour.**
-*   **PC portable :** Le laisser le plus possible branché sur secteur.
 
 ---
 
