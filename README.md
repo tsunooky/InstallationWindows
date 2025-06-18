@@ -90,11 +90,12 @@ Dans le cas où vous possédez plusieurs disques sur votre PC fixe, débrancher 
     *   Copier le contenu du fichier `ublock_filters.txt` (disponible dans ce repository) et coller.
     *   Cliquer sur **"Appliquer"**.
 
-### 3.3 🧩 Mise à Jour des Pilotes (Général)
+### 3.3 🧩 Mise à Jour des Pilotes
 
 1.  Télécharger et lancer **UserDiag** : [https://userdiag.com/fr/](https://userdiag.com/fr/)
-2.  Lancer analyse, cliquer **"Afficher la configuration en ligne"**.
-3.  Prioriser les **pilotes de la carte mère** (chipset, audio, LAN), pas les utilitaires. Télécharger depuis le site du fabricant (carte mère ou PC portable) en copiant le modèle sur l'interface.
+2.  Aller dans `Configuration PC` puis `Créer le rapport` et attendre.
+3.  Repérer et copier `Model :`, le coller sur Google et aller sur le site du fabricant (carte mère ou PC portable).
+4.  Installer les pilotes : prioriser les **pilotes de la carte mère** (chipset, audio, LAN), pas les utilitaires.
 
 ### 3.4 ⚙️ Installation et Configuration des Pilotes Graphiques
 
@@ -107,8 +108,8 @@ Dans le cas où vous possédez plusieurs disques sur votre PC fixe, débrancher 
     *   **Paramètres 3D > Régler les paramètres d'image...** > Cocher **"Utiliser mes préférences..."** > Curseur sur **"Performances"**.
     *   **Paramètres 3D > Gérer les paramètres 3D** :
         *   **Mode de faible latence** > **"Activé"**.
-        *   **Si PC fixe : Mode de gestion de l'alimentation** > **"Privilégier les performances maximales"**.
-        *   **Si PC portable :** Laisser "Normal" ou "Optimisé". Configurer "Privilégier les performances maximales" par jeu (dans l'onglet "Paramètres de programmes" ou NVIDIA App) si joué sur secteur.
+        *   **PC fixe : Mode de gestion de l'alimentation** > **"Privilégier les performances maximales"**.
+        *   **PC portable :** Laisser "Normal" ou "Optimisé". Configurer "Privilégier les performances maximales" par jeu (dans l'onglet "Paramètres de programmes" ou NVIDIA App) si joué sur secteur.
 
 #### 3.4.2 Cartes AMD
 
@@ -153,17 +154,13 @@ Personnaliser l'**Apparence** (Thèmes, Couleurs, Fond d'écran) dans **Personna
 
 1.  Télécharger "Visual C++ Redistributable Runtimes All-in-One" de TechPowerUp :
     [https://www.techpowerup.com/download/visual-c-redistributable-runtime-package-all-in-one/](https://www.techpowerup.com/download/visual-c-redistributable-runtime-package-all-in-one/)
-2.  Décompresser.
-3.  Clic droit `install_all.bat` > **"Exécuter en tant qu'administrateur"**.
+2.  Décompresser le dossier.
+3.  **Exécuter en tant qu'administrateur** `install_all.bat`.
 
 ### 3.8 📜 Optimisations de paramètres
 
 Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
 
-    # Amelioration de la precision de la souris
-    reg add "HKCU\Control Panel\Mouse" /v MouseSpeed /t REG_SZ /d "0" /f
-    reg add "HKCU\Control Panel\Mouse" /v MouseThreshold1 /t REG_SZ /d "0" /f
-    reg add "HKCU\Control Panel\Mouse" /v MouseThreshold2 /t REG_SZ /d "0" /f
     # Parametres de confidentialite
     reg add "HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v ShowSyncProviderNotifications /t REG_DWORD /d 00000000 /f
     reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v RotatingLockScreenOverlayEnabled /t REG_DWORD /d 00000000 /f
@@ -187,6 +184,7 @@ Ouvrir **Windows Terminal** (admin) et copier puis coller le texte ci-dessous :
     reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Search" /v AllowSearchToUseLocation /t REG_DWORD /d 0 /f
     reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Search" /v CortanaConsent /t REG_DWORD /d 0 /f
     # Parametres de Windows
+    reg add "HKCU\Control Panel\Mouse" /v MouseSpeed /t REG_SZ /d "0" /f
     reg add "HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32" /f /ve
     reg add "HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR" /v AppCaptureEnabled /t REG_DWORD /d 00000000 /f
     reg add "HKEY_CURRENT_USER\System\GameConfigStore" /v GameDVR_Enabled /t REG_DWORD /d 00000000 /f
@@ -241,11 +239,10 @@ Après avoir installé toutes vos applications, désactivez les services inutile
 
 1. Vider le dossier **"Téléchargements"**.
 2.  `Win`, recherchez `Nettoyage de disque`.
-    *   Sélectionner `C:`.
-    *   Cliquer **"Nettoyer les fichiers système"**.
-    *   Sélectionner `C:`.
-    *   Cocher toutes les cases.
-    *   Cliquer **"OK"**.
+    *   Cochez toutes les catégories
+    *   Cliquez sur *"Nettoyer les fichiers système"**.
+    *   Cochez toutes les catégories
+    *   Cliquez sur **"OK"**.
 3.  Ouvrir **Windows Terminal** (admin), exécuter :
     ```powershell
     Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
