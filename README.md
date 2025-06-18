@@ -13,28 +13,26 @@ Suivez ce guide attentivement. Ces manipulations sont effectuées sous votre res
 
 *   **Sauvegarder tous les fichiers importants** sur un support externe.
 *   **Sauvegarder la clé d'installation de Windows** :
-    1.  Ouvrir **Windows Terminal** (admin) et exécuter :
+    1.  Ouvrir **Windows Terminal** puis exécuter :
         ```powershell
         (Get-WmiObject -query 'select * from SoftwareLicensingService').OA3xOriginalProductKey
         ```
-    2.  Copier et conserver la clé.
+    2.  Copier et conserver la clé d'installation.
 
 ### 1.2 Création du Support d'Installation de Windows 11
 
-1.  Prendre une clé USB d'au minimum 8GB puis **sauvegarder les fichiers importants** de la clé sur un autre support externe.
+1.  Prendre une clé USB d'au minimum 8GB puis **sauvegarder ses fichiers** sur un autre support externe, son contenu sera effacé.
 2.  Télécharger l'outil de création de support Microsoft :
     [https://www.microsoft.com/fr-fr/software-download/windows11](https://www.microsoft.com/fr-fr/software-download/windows11)
     (Option "Création d'un support d'installation de Windows 11").
-3.  Lancer l'outil et accepter les termes.
-4.  Choisir "Disque mémoire flash USB".
-5.  Sélectionner la clé USB (8Go min, le contenu de la clé sera effacée).
+3.  Lancer le logiciel, continuer, choisir "Disque mémoire flash USB" et séléctionner la clé.
 
 ### 1.3 Ajout du Fichier `autounattend.xml`
 
-Le fichier `autounattend.xml` présent dans ce repository automatise de nombreuses étapes d'installation (langue, EULA, compte local, contournement des exigences matérielles, suppression de bloatware, etc.).
+Le fichier `autounattend.xml` présent dans ce repository automatise de nombreuses étapes de l'installation (langue, EULA, compte local, suppression de bloatware, etc.).
 
-1.  Télécharger `autounattend.xml` depuis ce repository GitHub.
-2.  Copier `autounattend.xml` **à la racine** de la clé USB d'installation.
+1.  Télécharger `autounattend.xml` depuis la racine de ce repository GitHub.
+2.  Déplacer `autounattend.xml` **à la racine** de la clé USB d'installation de Windows 11 (ne pas renommer le fichier).
 
 ### 1.4 Débrancher les Autres Disques (PC Fixe Uniquement)
 
@@ -45,14 +43,12 @@ Dans le cas où vous possédez plusieurs disques sur votre PC fixe, débrancher 
 
 ## 2. 🚀 Installation de Windows 11
 
-1.  Brancher la clé USB sur le PC.
-2.  Redémarrer le PC.
-3.  Accéder au **Menu de Démarrage (Boot Menu)** ou au **BIOS** (touches courantes à spam : `F11`, `F12`, `F8`, `SUPPR (DEL)`, `ESC`).
-4.  Sélectionner la clé USB comme périphérique de démarrage.
-5.  L'installation de Windows 11 démarre. Suivre les instructions pour le choix de la partition et le nom de l'ordinateur.
-6.  **IMPORTANT :** Lors du premier redémarrage automatique après la copie des fichiers (compte à rebours de 10s), **retirer la clé USB**.
-7.  Terminer l'installation.
-8.  Rébrancher les autres disques (PC Fixe Uniquement)
+1.  Brancher la clé USB sur le PC puis redémarrer le PC.
+2.  Accéder au **BIOS** au démarrage du PC (touches courantes à spam : `F10`, `F11`, `F12`, `SUPPR`, `ESC`).
+3.  Sélectionner la clé USB comme périphérique de démarrage.
+4.  L'installation de Windows 11 démarre. Si vous avez bien retiré tous les autres disques que celui sur lequel vous voulez installer Windows, faites un clic droit sur chaque partition du disque 0 puis supprimer, puis finalement séléctionnez la seule partition restante du disque 0 puis continuer.
+5.  L'installation peut prendre quelques minutes, vous devrez rentrer un nom et un mot de passe pour créer un compte local.
+6.  Rébrancher les autres disques un fois l'installation terminée (PC Fixe Uniquement).
 
 ---
 
@@ -63,28 +59,28 @@ Dans le cas où vous possédez plusieurs disques sur votre PC fixe, débrancher 
 1.  Ouvrir **Paramètres** > **Windows Update**.
 2.  Cliquer sur **Rechercher des mises à jour** et installer.
 3.  Redémarrer le PC.
-4.  Répéter jusqu'à ce qu'il n'y ait plus de mises à jour.
+4.  Répéter ces opérations jusqu'à ce qu'il n'y ait plus de mises à jour.
 
 ### 3.2 🌐 Installation et Configuration du Navigateur
 
-1.  Ouvrir **Windows Terminal** (admin).
-2.  Installer **Firefox** :
+1.  Ouvrir **Windows Terminal**.
+2.  Installer un navigateur :
+    **Firefox** (Recommandé):
     ```powershell
-    winget install --id=Mozilla.Firefox -e
+    winget install --id=Mozilla.Firefox -e --accept-package-agreements
     ```
-    OU **Google Chrome** :
+    **Google Chrome** :
     ```powershell
-    winget install --id=Google.Chrome -e
+    winget install --id=Google.Chrome -e --accept-package-agreements
     ```
-    
-4.  Mettre à jour tous les paquets des applications :
+    **Brave** :
+    ```powershell
+    winget install --id=Brave.Brave -e --accept-package-agreements
+    ```
+3.  Mettre à jour les paquets de toutes les applications :
     ```powershell
     winget upgrade --all --include-unknown --accept-package-agreements
     ```
-5.  Définir comme navigateur par défaut :
-    *   **Paramètres > Applications > Applications par défaut**.
-    *   Rechercher et sélectionner le navigateur installé.
-    *   Assigner tous les types de fichiers et protocoles (HTTP, HTTPS, .html, etc.) au navigateur.
 
 #### 3.2.1 Configuration Spécifique pour Firefox
 
@@ -93,7 +89,7 @@ Dans le cas où vous possédez plusieurs disques sur votre PC fixe, débrancher 
     *   [ClearURLs](https://addons.mozilla.org/fr/firefox/addon/clearurls/)
     *   [Decentraleyes](https://addons.mozilla.org/fr/firefox/addon/decentraleyes/)
     *   [Privacy Badger](https://addons.mozilla.org/fr/firefox/addon/privacy-badger17/)
-2.  **(Optionnel) Configurer uBlock Origin pour enlever les Shorts sur YouTube:**
+2.  **(Optionnel) Configurer uBlock Origin pour enlever les Shorts sur YouTube :**
     *   Ouvrir tableau de bord uBlock Origin (icône extension > engrenages).
     *   Onglet **"Mes filtres"**.
     *   Copier le contenu du fichier `ublock_filters.txt` (disponible dans ce repository) et coller.
@@ -239,7 +235,7 @@ Ouvrir **Windows Terminal** (admin) et Exécuter :
 
 Après avoir installé toutes vos applications, désactivez les services inutiles au démarrage. **Attention.**
 
-1. AAAAAAAA
+1.  Accéder au **BIOS** au démarrage du PC (touches courantes à spam : `F10`, `F11`, `F12`, `SUPPR`, `ESC`).
 1.  `Win`, recherchez `Configuration du système`.
 2.  Onglet **"Services"**.
 3.  Cocher en bas **"Masquer tous les services Microsoft"**.
