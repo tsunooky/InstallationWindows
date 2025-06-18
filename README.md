@@ -12,12 +12,10 @@ Suivez ce guide attentivement. Ces manipulations sont effectuées sous votre res
 ### 1.1 Sauvegarde (si réinstallation)
 
 *   **Sauvegarder tous les fichiers importants** sur un support externe.
-*   **Sauvegarder la clé d'installation de Windows** :
-    1.  Ouvrir **Windows Terminal** puis exécuter :
+*   Ouvrir **Windows Terminal**, copier et conserver la clé d'installation de Windows :
         ```powershell
         (Get-WmiObject -query 'select * from SoftwareLicensingService').OA3xOriginalProductKey
         ```
-    2.  Copier et conserver la clé d'installation.
 
 ### 1.2 Création du Support d'Installation de Windows 11
 
@@ -95,7 +93,7 @@ Dans le cas où vous possédez plusieurs disques sur votre PC fixe, débrancher 
 ### 3.3 🧩 Mise à Jour des Pilotes (Général)
 
 1.  Télécharger et lancer **UserDiag** : [https://userdiag.com/fr/](https://userdiag.com/fr/)
-2.  Installer, lancer analyse, cliquer **"Afficher la configuration en ligne"**.
+2.  Lancer analyse, cliquer **"Afficher la configuration en ligne"**.
 3.  Prioriser les **pilotes de la carte mère** (chipset, audio, LAN), pas les utilitaires. Télécharger depuis le site du fabricant (carte mère ou PC portable) en copiant le modèle sur l'interface.
 
 ### 3.4 ⚙️ Installation et Configuration des Pilotes Graphiques
