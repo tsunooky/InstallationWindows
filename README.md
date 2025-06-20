@@ -291,7 +291,7 @@ Outil avancé. **Utiliser avec prudence.**
     dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
     dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
     ```
-3.  Redémarrer si c'est demandé.
+3.  Redémarrer le PC.
 4.  Installer WSL et Ubuntu : `wsl --install`
     Définir WSL2 par défaut : `wsl --set-default-version 2`
 5.  Configurer nom d'utilisateur/mot de passe Linux.
