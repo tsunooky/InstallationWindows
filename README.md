@@ -228,12 +228,12 @@ Ouvrir **Windows Terminal** (admin) et Exécuter :
 
 Après avoir installé toutes vos applications, désactivez les services inutiles au démarrage. **Attention.**
 
-1.  Accéder au **BIOS** au démarrage du PC (touches courantes à spam : `F10`, `F11`, `F12`, `SUPPR`, `ESC`).
-1.  `Win`, recherchez `Configuration du système`.
-2.  Onglet **"Services"**.
-3.  Cocher en bas **"Masquer tous les services Microsoft"**.
-4.  Décochez les services **CONNUS** non nécessaires au démmarage. (Ne décochez pas les services inconnus, la colonne `Fabricant` peut vous aider)
-5.  **"Appliquer"** > **"Redémarrer"**.
+1.  **Paramètres > Applications > Démarrage > Décocher toutes les applications connues non nécéssaires au démarrage de l'ordinateur** :
+2.  `Win`, recherchez `Configuration du système`.
+3.  Onglet **"Services"**.
+4.  Cocher en bas **"Masquer tous les services Microsoft"**.
+5.  Décochez les services **CONNUS** non nécessaires au démmarage. (Ne décochez pas les services inconnus, la colonne `Fabricant` peut vous aider)
+6.  **"Appliquer"** > **"Redémarrer"**.
 
 ### 3.11 🧹 Nettoyage Final
 
