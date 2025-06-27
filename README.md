@@ -14,8 +14,10 @@ Suivez ce guide attentivement. Ces manipulations sont effectuées sous votre res
 *   **Sauvegarder tous les fichiers importants** sur un support externe.
 *   Ouvrir **Windows Terminal**, copier et conserver la clé d'installation de Windows :
         ```powershell
+    
         powershell "(Get-WmiObject -query 'select * from SoftwareLicensingService').OA3xOriginalProductKey"
-        ```
+
+    ```
 
 ### 1.2 Création du Support d'Installation de Windows 11
 
