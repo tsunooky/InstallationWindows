@@ -5,8 +5,6 @@ Une installation de Windows 11 sans compte Microsoft ni applications inutiles, a
 > [!WARNING]
 > L'installation efface le disque choisi. Sauvegardez vos fichiers avant de commencer.
 
-**Étapes** : [1. Préparer la clé](#1-préparer-la-clé-usb) · [2. Installer](#2-installer-windows) · [3. Mises à jour et pilotes](#3-mettre-à-jour-windows-et-installer-les-pilotes) · [4. Script](#4-lancer-le-script) · [5. Carte graphique](#5-régler-la-carte-graphique) · [6. Bonnes pratiques](#6-bonnes-pratiques) · [7. À tester soi-même](#7-à-tester-soi-même) · [8. Optionnel](#8-optionnel)
-
 ## 1. Préparer la clé USB
 
 1. Télécharger ce dépôt : bouton **Code** > **Download ZIP**, puis extraire le dossier.
@@ -21,8 +19,6 @@ Une installation de Windows 11 sans compte Microsoft ni applications inutiles, a
 > ```powershell
 > (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
 > ```
->
-> Si rien ne s'affiche, la clé n'est pas enregistrée dans le PC : la retrouver dans le mail d'achat ou l'historique de commandes. Une licence déjà activée sur ce PC se réactive toute seule.
 
 ## 2. Installer Windows
 
@@ -35,7 +31,7 @@ Une installation de Windows 11 sans compte Microsoft ni applications inutiles, a
 Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, puis entrer votre clé.
 
 > [!TIP]
-> Carte réseau non reconnue : branchez votre téléphone en USB et activez le partage de connexion.
+> Carte réseau non reconnue : branchez votre téléphone en USB et activez le partage de connexion le temps d'installer les drivers.
 
 ## 3. Mettre à jour Windows et installer les pilotes
 
@@ -47,7 +43,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 3. Redémarrer.
 
 > [!NOTE]
-> Installez uniquement les pilotes, pas les utilitaires du fabricant (centres de contrôle, RGB, « boosters »).
+> Installez uniquement les pilotes, pas les utilitaires du fabricant (centres de contrôle, RGB, "boosters").
 
 ## 4. Lancer le script
 
@@ -81,27 +77,23 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 - **Latence** (PC fixe) : mode d'alimentation « Meilleures performances », économies d'énergie désactivées.
 - **Jeu** : optimisations pour les jeux en fenêtre activées, enregistrement en arrière-plan coupé.
 - **Edge** : conservé, mais plus aucun processus en arrière-plan.
-- **Modules** : Xbox, impression et WSL / virtualisation retirés si non cochés. OneDrive est déjà retiré par la clé USB. Tous se réactivent depuis le menu du script.
-- **Bilan de santé** : intégrité de la mémoire (VBS), pilote de la carte graphique et fréquence de l'écran vérifiés. Le bilan ne modifie rien, il indique quoi corriger.
+- **Modules** : Xbox, impression et WSL / virtualisation retirés si non cochés. Tous se réactivent depuis le menu du script.
 
 </details>
 
-Relancer `config.ps1` de la même façon ouvre un menu : activer ou désactiver un module, refaire le bilan de santé, ou réappliquer les optimisations après une grosse mise à jour de Windows.
-
-> [!NOTE]
-> Au premier lancement, Firefox propose de devenir le navigateur par défaut et ouvre la page des Paramètres correspondante.
+Relancer `config.ps1` de la même façon ouvre un menu : activer ou désactiver un module, faire un bilan de santé, ou réappliquer les optimisations.
 
 ## 5. Régler la carte graphique
 
-Les bons réglages dépendent de vos jeux et de vos préférences (latence ou fluidité). Ces vidéos, en anglais, expliquent chaque option :
+Les bons réglages dépendent de vos jeux et de vos préférences. Ces vidéos, expliquent chaque option clairement :
 
-- **NVIDIA** : [This Is How You Should Configure The Nvidia App](https://www.youtube.com/watch?v=j08cAZGMhTM) (Hardware Unboxed)
+- **NVIDIA** : [Configure The Nvidia App](https://www.youtube.com/watch?v=j08cAZGMhTM) (Hardware Unboxed)
 - **AMD** : [BEST AMD Software Settings (2026)](https://www.youtube.com/watch?v=kJGgMJUueKM) (Ancient Gameplays)
 
 ## 6. Bonnes pratiques
 
-- Pas d'overclocking : l'undervolting apporte bien plus, en températures, en durée de vie des composants et souvent même en performances.
-- Pas de logiciel de nettoyage ou d'« optimisation » (CCleaner et autres).
+- Pas d'overclocking : l'undervolting apporte bien plus, en températures, en durée de vie des composants et même en performances.
+- Pas de logiciel de nettoyage ou d'optimisation (CCleaner et autres).
 - Pas d'antivirus en plus : Microsoft Defender suffit.
 - Garder Windows et les pilotes à jour.
 
@@ -156,45 +148,5 @@ Si le gain se confirme, écarter le cœur 0 devient en grande partie inutile.
 4. Dans le terminal Ubuntu, mettre à jour :
 
    ```bash
-   sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y && sudo apt autoclean -y
+   sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y && sudo apt autoclean -y && sudo apt install -y vim nano
    ```
-
-5. Installer quelques outils utiles :
-
-   ```bash
-   sudo apt install -y vim nano build-essential gcc make xsel
-   ```
-
-### Configuration simple de Vim
-
-Ouvrir le fichier avec `vim ~/.vimrc`, appuyer sur <kbd>i</kbd>, coller le contenu ci-dessous, puis <kbd>Échap</kbd> et taper `:wq`.
-
-```vim
-filetype plugin indent on
-syntax on
-set encoding=utf-8
-set number
-set wildmenu
-set lazyredraw
-set showmatch
-set cmdheight=1
-set ruler
-set tabstop=4
-set shiftwidth=4
-set softtabstop=4
-set shiftround
-set expandtab
-set autoindent
-set smartindent
-set incsearch
-set hlsearch
-if $COLORTERM == 'gnome-terminal' || $COLORTERM == 'truecolor' || $TERM_PROGRAM == 'vscode'
-    set t_Co=256
-endif
-set scrolloff=3
-set sidescrolloff=7
-set wrap
-set backspace=indent,eol,start
-```
-
-</details>
