@@ -31,7 +31,7 @@ Une installation de Windows 11 sans compte Microsoft ni applications inutiles, a
 Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, puis entrer votre clé.
 
 > [!TIP]
-> Carte réseau non reconnue : branchez votre téléphone en USB et activez le partage de connexion le temps d'installer les drivers.
+> Carte réseau non reconnue : branchez votre téléphone en USB et activez le partage de connexion le temps d'installer les pilotes.
 
 ## 3. Mettre à jour Windows et installer les pilotes
 
@@ -85,7 +85,7 @@ Relancer `config.ps1` de la même façon ouvre un menu : activer ou désactiver 
 
 ## 5. Régler la carte graphique
 
-Les bons réglages dépendent de vos jeux et de vos préférences. Ces vidéos, expliquent chaque option clairement :
+Les bons réglages dépendent de vos jeux et de vos préférences. Ces vidéos expliquent chaque option clairement :
 
 - **NVIDIA** : [Configure The Nvidia App](https://www.youtube.com/watch?v=j08cAZGMhTM) (Hardware Unboxed)
 - **AMD** : [BEST AMD Software Settings (2026)](https://www.youtube.com/watch?v=kJGgMJUueKM) (Ancient Gameplays)
@@ -138,7 +138,7 @@ Si le gain se confirme, écarter le cœur 0 devient en grande partie inutile.
 ## 8. Optionnel
 
 <details>
-<summary>Afficher WSL2 et la configuration de Vim</summary>
+<summary>Afficher l'installation de WSL2</summary>
 
 ### Installer WSL2 (Linux dans Windows)
 
