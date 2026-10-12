@@ -94,7 +94,7 @@ function Wait-Exit([string]$Message) {
 }
 
 if (-not $PSCommandPath) {
-    Wait-Exit 'Run this script from the config.ps1 file (right-click > Run with PowerShell).'
+    Wait-Exit 'Run this script from the setup.ps1 file (right-click > Run with PowerShell).'
 }
 
 # Always run in an elevated Windows PowerShell 5.1 (Appx and DISM cmdlets need it).
@@ -519,7 +519,7 @@ function Set-FirefoxConfig {
     $autoconfig = 'pref("general.config.filename", "firefox.cfg");' + "`n" + 'pref("general.config.obscure_value", 0);' + "`n"
     [IO.File]::WriteAllText((Join-Path $prefDir 'autoconfig.js'), $autoconfig, $utf8)
     $cfg = @'
-// Defaults set by config.ps1 (this first line is ignored by Firefox)
+// Defaults set by setup.ps1 (this first line is ignored by Firefox)
 defaultPref("datareporting.policy.dataSubmissionEnabled", false);
 defaultPref("datareporting.healthreport.uploadEnabled", false);
 defaultPref("app.shield.optoutstudies.enabled", false);
