@@ -203,6 +203,34 @@ function Remove-Shortcut([string[]]$Names) {
     }
 }
 
+# Removes Appx packages for all users and deprovisions them. Fails only if one is still
+# installed for the current user; packages Windows marks as non-removable are reported, not failed.
+function Remove-AppPackage([string[]]$Names) {
+    $provisioned = @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue)
+    $protected = @()
+    $errors = @{}
+    foreach ($name in $Names) {
+        # Deprovision first so the app is not installed again for new users.
+        foreach ($package in @($provisioned | Where-Object { $_.DisplayName -eq $name })) {
+            Remove-AppxProvisionedPackage -Online -AllUsers -PackageName $package.PackageName -ErrorAction SilentlyContinue | Out-Null
+        }
+        foreach ($package in @(Get-AppxPackage -AllUsers -Name $name -ErrorAction SilentlyContinue)) {
+            if ($package.NonRemovable) { $protected += $name; continue }
+            # Fall back to the current user when the all-users removal is refused.
+            try { Remove-AppxPackage -Package $package.PackageFullName -AllUsers -ErrorAction Stop }
+            catch {
+                try { Remove-AppxPackage -Package $package.PackageFullName -ErrorAction Stop }
+                catch { $errors[$name] = $_.Exception.Message.Trim() }
+            }
+        }
+    }
+    $remaining = @($Names | Where-Object { $protected -notcontains $_ -and (Get-AppxPackage -Name $_ -ErrorAction SilentlyContinue) })
+    if ($remaining.Count -gt 0) {
+        throw ('still installed: ' + (($remaining | ForEach-Object { if ($errors[$_]) { '{0} ({1})' -f $_, $errors[$_] } else { $_ } }) -join '; '))
+    }
+    if ($protected.Count -gt 0) { return (Skip ('protected by Windows, kept: {0}' -f (($protected | Select-Object -Unique) -join ', '))) }
+}
+
 # ---------------------------------------------------------------------------
 # Console UI
 # ---------------------------------------------------------------------------
@@ -691,6 +719,11 @@ function Invoke-SystemSteps($Info, $Choices) {
         Set-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance' 'fAllowToGetHelp' 0
     }
 
+    Invoke-Step 'Mobile devices (Cross Device Experience Host)' {
+        # Background process at every logon; Phone Link is already removed by the USB key.
+        Remove-AppPackage @('MicrosoftWindows.CrossDevice')
+    }
+
     Invoke-Step 'Cross-device resume and connected devices' {
         $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
         Set-RegValue $key 'EnableCdp' 0
@@ -895,29 +928,7 @@ function Invoke-CleanupSteps {
 function Disable-Xbox([bool]$KeepGameBar = $false) {
     Invoke-Step 'Remove Xbox apps' {
         $targets = @($XboxPackages | Where-Object { -not ($KeepGameBar -and $_ -eq 'Microsoft.XboxGamingOverlay') })
-        $provisioned = @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue)
-        $protected = @()
-        $errors = @{}
-        foreach ($name in $targets) {
-            # Deprovision first so the app is not installed again for new users.
-            foreach ($package in @($provisioned | Where-Object { $_.DisplayName -eq $name })) {
-                Remove-AppxProvisionedPackage -Online -AllUsers -PackageName $package.PackageName -ErrorAction SilentlyContinue | Out-Null
-            }
-            foreach ($package in @(Get-AppxPackage -AllUsers -Name $name -ErrorAction SilentlyContinue)) {
-                if ($package.NonRemovable) { $protected += $name; continue }
-                # Fall back to the current user when the all-users removal is refused.
-                try { Remove-AppxPackage -Package $package.PackageFullName -AllUsers -ErrorAction Stop }
-                catch {
-                    try { Remove-AppxPackage -Package $package.PackageFullName -ErrorAction Stop }
-                    catch { $errors[$name] = $_.Exception.Message.Trim() }
-                }
-            }
-        }
-        $remaining = @($targets | Where-Object { $protected -notcontains $_ -and (Get-AppxPackage -Name $_ -ErrorAction SilentlyContinue) })
-        if ($remaining.Count -gt 0) {
-            throw ('still installed: ' + (($remaining | ForEach-Object { if ($errors[$_]) { '{0} ({1})' -f $_, $errors[$_] } else { $_ } }) -join '; '))
-        }
-        if ($protected.Count -gt 0) { return (Skip ('protected by Windows, kept: {0}' -f (($protected | Select-Object -Unique) -join ', '))) }
+        Remove-AppPackage $targets
     }
     if (-not $KeepGameBar) {
         Invoke-Step 'Xbox controller button: no Game Bar' {
@@ -1124,6 +1135,34 @@ function Show-HealthCheck($Info) {
         Write-Check 'info' 'Secure Boot not supported (legacy BIOS / CSM)'
     }
 
+    if (-not $Info.IsLaptop) {
+        # RAM speed: without its EXPO / XMP profile a kit runs at the base JEDEC speed, and a BIOS
+        # update or a CMOS reset silently goes back to it. The rated speed is printed on the kit.
+        $modules = @(Get-CimInstance -ClassName Win32_PhysicalMemory)
+        if ($modules.Count -gt 0) {
+            $speed = [int]($modules | Measure-Object -Property ConfiguredClockSpeed -Maximum).Maximum
+            $type = [int]$modules[0].SMBIOSMemoryType
+            $parts = @($modules | ForEach-Object { ([string]$_.PartNumber).Trim() } | Where-Object { $_ } | Select-Object -Unique)
+            $label = 'RAM at {0} MT/s' -f $speed
+            if ($parts.Count -gt 0) { $label += ' (kit: {0})' -f ($parts -join ', ') }
+            $baseSpeeds = switch ($type) { 34 { @(4800, 5200, 5600) } 26 { @(2133, 2400, 2666, 2933, 3200) } default { @() } }
+            if ($baseSpeeds -contains $speed) {
+                Write-Check 'info' $label 'Base speed: if the kit is rated faster, enable EXPO (AMD) or XMP (Intel) in the BIOS'
+            } else {
+                Write-Check 'ok' $label
+            }
+        }
+
+        # Integrated graphics next to a graphics card: it reserves part of the RAM for itself.
+        $integrated = @($Info.Gpus | Where-Object { -not $_.IsDiscrete -and -not $_.IsBasic -and ($_.Vendor -eq 'AMD' -or $_.Vendor -eq 'Intel') })
+        if ($integrated.Count -gt 0 -and @($Info.Gpus | Where-Object { $_.IsDiscrete }).Count -gt 0) {
+            $installed = ($modules | Measure-Object -Property Capacity -Sum).Sum
+            $visible = (Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory
+            $reserved = [math]::Max(0, [math]::Round(($installed - $visible) / 1GB, 1))
+            Write-Check 'info' ('Integrated graphics enabled ({0}), {1} GB of RAM reserved' -f $integrated[0].Name, $reserved) 'Not used for video encoding or an extra display? Disable it in the BIOS'
+        }
+    }
+
     # Graphics driver
     foreach ($gpu in $Info.Gpus) {
         if ($gpu.IsBasic) {
@@ -1315,7 +1354,7 @@ function Start-MainMenu($Info, $State) {
                Hint = 'Needed for Docker Desktop, WSL2 and Android emulators.' },
             @{ Label = 'OneDrive'; Status = (& $status $oneDrive); StatusColor = (& $color $oneDrive)
                Hint = 'Microsoft file sync.' },
-            @{ Label = 'Health check'; SpaceBefore = $true; Hint = 'Checks VBS, Secure Boot, graphics driver and display refresh rate (read only).' },
+            @{ Label = 'Health check'; SpaceBefore = $true; Hint = 'Checks VBS, Secure Boot, RAM speed, integrated graphics, graphics driver and refresh rate (read only).' },
             @{ Label = 'Reapply optimizations'; Hint = 'Run it again after a major Windows update.' },
             @{ Label = 'Quit'; SpaceBefore = $true }
         )
