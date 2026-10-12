@@ -100,9 +100,9 @@ Les bons réglages dépendent de vos jeux et de vos préférences. Ces vidéos e
 ## 7. À tester soi-même
 
 <details>
-<summary>Afficher les réglages à tester</summary>
+<summary>Afficher le réglage à tester</summary>
 
-Ces réglages donnent des résultats différents selon le processeur et le jeu. Mesurez le FPS moyen et le 1 % low avant et après, et revenez en arrière s'il n'y a pas de gain.
+Ce réglage donne des résultats différents selon le processeur et le jeu. Mesurez le FPS moyen et le 1 % low avant et après, et revenez en arrière s'il n'y a pas de gain.
 
 ### Écarter le cœur 0 du jeu
 
@@ -110,28 +110,7 @@ Ces réglages donnent des résultats différents selon le processeur et le jeu. 
 2. Clic droit sur le jeu > **Définir l'affinité**.
 3. Décocher les **deux** premiers processeurs (le cœur 0 et son deuxième thread).
 
-À refaire à chaque lancement du jeu.
-
-### Politique des threads courts (AMD avec PBO activé uniquement)
-
-**À ne pas utiliser** sur Intel 12e génération ou plus récent (les threads du jeu iraient sur les E-cores), ni sur les X3D à deux CCD (7900X3D, 7950X3D, 9900X3D, 9950X3D).
-
-Ouvrir **Terminal** en administrateur, puis activer (« All processors ») :
-
-```powershell
-powercfg -attributes SUB_PROCESSOR bae08b81-2d5e-4688-ad6a-13243356654b -ATTRIB_HIDE
-powercfg /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR bae08b81-2d5e-4688-ad6a-13243356654b 0
-powercfg /setactive SCHEME_CURRENT
-```
-
-Revenir au réglage par défaut (« Prefer performant processors ») :
-
-```powershell
-powercfg /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR bae08b81-2d5e-4688-ad6a-13243356654b 2
-powercfg /setactive SCHEME_CURRENT
-```
-
-Si le gain se confirme, écarter le cœur 0 devient en grande partie inutile.
+À refaire à chaque lancement du jeu. Certains anti-triches refusent ce changement : dans ce cas, laisser l'affinité par défaut.
 
 </details>
 
