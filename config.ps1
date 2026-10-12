@@ -402,7 +402,7 @@ function Get-SystemInfo {
         Gpus           = $gpus
         HasDiscreteArc = [bool]($gpus | Where-Object { $_.Vendor -eq 'Intel' -and $_.IsDiscrete })
         HasNvidia      = [bool]($gpus | Where-Object { $_.Vendor -eq 'NVIDIA' })
-        IsLaptop       = [bool](Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue)
+        IsLaptop       = ($cs.PCSystemType -eq 2)  # Mobile; a USB UPS shows up as a battery, so Win32_Battery is not used
         IsVM           = $isVm
         RamGB          = $ramGB
         HasLinux       = $hasLinux
@@ -432,6 +432,9 @@ function Get-PrintingEnabled {
 }
 
 function Get-VirtualizationEnabled {
+    # Docker or emulator installers can enable the features while the hypervisor stays off at boot:
+    # report "enabled" only when the hypervisor actually runs.
+    if (-not (Get-CimInstance -ClassName Win32_ComputerSystem).HypervisorPresent) { return $false }
     foreach ($feature in 'VirtualMachinePlatform', 'Microsoft-Windows-Subsystem-Linux', 'Microsoft-Hyper-V-All') {
         $f = Get-WindowsOptionalFeature -Online -FeatureName $feature -ErrorAction SilentlyContinue
         if ($f -and $f.State -eq 'Enabled') { return $true }
@@ -600,15 +603,10 @@ function Invoke-PrivacySteps($Info) {
         Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting' 'Disabled' 1
     }
 
-    Invoke-Step 'PowerShell telemetry' {
-        [Environment]::SetEnvironmentVariable('POWERSHELL_TELEMETRY_OPTOUT', '1', 'Machine')
-    }
-
     Invoke-Step 'Advertising ID and tailored experiences' {
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo' 'Enabled' 0
         Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo' 'DisabledByGroupPolicy' 1
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy' 'TailoredExperiencesWithDiagnosticDataEnabled' 0
-        Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'Start_TrackProgs' 0
     }
 
     Invoke-Step 'Inking and typing personalization' {
@@ -637,11 +635,7 @@ function Invoke-PrivacySteps($Info) {
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings' 'IsMSACloudSearchEnabled' 0
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings' 'IsAADCloudSearchEnabled' 0
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings' 'IsDeviceSearchHistoryEnabled' 0
-    }
-
-    Invoke-Step 'Defender: no automatic sample submission' {
-        if (-not (Get-Command -Name 'Set-MpPreference' -ErrorAction SilentlyContinue)) { return (Skip 'Defender not available') }
-        Set-MpPreference -SubmitSamplesConsent 2
+        Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings' 'IsWebSuggestionsEnabled' 0
     }
 
     if ($Info.HasNvidia) {
@@ -653,12 +647,7 @@ function Invoke-PrivacySteps($Info) {
 }
 
 function Invoke-AiSteps {
-    Write-Section 'AI and Copilot'
-
-    Invoke-Step 'Copilot' {
-        Set-RegValue 'HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
-        Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
-    }
+    Write-Section 'AI'
 
     Invoke-Step 'Recall, Click to Do and Settings agent' {
         $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
@@ -681,12 +670,8 @@ function Invoke-AiSteps {
 function Invoke-SystemSteps($Info, $Choices) {
     Write-Section 'System and services'
 
-    Invoke-Step 'SysMain' {
-        if ($Info.RamGB -lt 32) { return (Skip ('kept, {0} GB of RAM' -f $Info.RamGB)) }
-        [void](Set-ServiceStartup -Name 'SysMain' -Startup Disabled -Stop)
-    }
-
     Invoke-Step 'Hibernation' {
+        if ($Info.IsLaptop) { return (Skip 'laptop, Windows uses it to protect the battery in standby') }
         Invoke-Native -File 'powercfg.exe' -Arguments @('/hibernate', 'off') | Out-Null
     }
 
@@ -785,13 +770,6 @@ function Invoke-PowerSteps($Info) {
                     }
                 }
             }
-            # "Allow the computer to turn off this device to save power" (Device Manager checkbox).
-            $pnpId = [string]$adapter.PnPDeviceID
-            $power = @(Get-CimInstance -Namespace 'root\wmi' -ClassName 'MSPower_DeviceEnable' -ErrorAction SilentlyContinue |
-                Where-Object { $pnpId -and $_.InstanceName.StartsWith($pnpId, [StringComparison]::OrdinalIgnoreCase) })
-            foreach ($entry in $power) {
-                if ($entry.Enable) { Set-CimInstance -InputObject $entry -Property @{ Enable = $false } -ErrorAction SilentlyContinue }
-            }
         }
     }
 }
@@ -848,12 +826,6 @@ function Invoke-EdgeSteps {
         Set-RegValue $key 'ShowRecommendationsEnabled' 0
         Set-RegValue $key 'SpotlightExperiencesAndRecommendationsEnabled' 0
         Set-RegValue $key 'DefaultBrowserSettingEnabled' 0
-    }
-
-    Invoke-Step 'Edge updates: daily check only' {
-        Get-ScheduledTask -TaskName 'MicrosoftEdgeUpdateTaskMachineUA*' -ErrorAction SilentlyContinue | Disable-ScheduledTask | Out-Null
-        [void](Set-ServiceStartup -Name 'edgeupdate' -Startup Manual)
-        [void](Set-ServiceStartup -Name 'edgeupdatem' -Startup Manual)
     }
 
     Invoke-Step 'Edge desktop shortcut' {
@@ -947,6 +919,11 @@ function Disable-Xbox([bool]$KeepGameBar = $false) {
         }
         if ($protected.Count -gt 0) { return (Skip ('protected by Windows, kept: {0}' -f (($protected | Select-Object -Unique) -join ', '))) }
     }
+    if (-not $KeepGameBar) {
+        Invoke-Step 'Xbox controller button: no Game Bar' {
+            Set-RegValue 'HKCU:\Software\Microsoft\GameBar' 'UseNexusForGameBarEnabled' 0
+        }
+    }
 }
 
 function Enable-Xbox {
@@ -954,6 +931,9 @@ function Enable-Xbox {
     foreach ($entry in $XboxStoreIds.GetEnumerator()) {
         $id = $entry.Value
         Invoke-Step ('Install {0}' -f $entry.Key) { Install-WingetPackage -Id $id -Source 'msstore' }
+    }
+    Invoke-Step 'Xbox controller button: Game Bar' {
+        Set-RegValue 'HKCU:\Software\Microsoft\GameBar' 'UseNexusForGameBarEnabled' 1
     }
 }
 
@@ -1126,8 +1106,22 @@ function Show-HealthCheck($Info) {
     }
 
     if ($Info.IsVM) {
-        Write-Check 'info' 'Virtual machine: graphics checks skipped'
+        Write-Check 'info' 'Virtual machine: hardware checks skipped'
         return
+    }
+
+    # Secure Boot: required by anti-cheats (Vanguard: error VAN 9003). The 2011 certificate that
+    # signs the Windows boot manager expires in October 2026; Windows Update installs the 2023 ones.
+    try {
+        if (Confirm-SecureBootUEFI) {
+            $db = [Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI -Name db).Bytes)
+            if ($db -match 'Windows UEFI CA 2023') { Write-Check 'ok' 'Secure Boot enabled, 2023 certificates present' }
+            else { Write-Check 'warn' 'Secure Boot enabled, 2023 certificates missing' 'Install all Windows updates, then update the BIOS' }
+        } else {
+            Write-Check 'warn' 'Secure Boot disabled' 'Required by the anti-cheat of Valorant, League of Legends, Battlefield...'
+        }
+    } catch {
+        Write-Check 'info' 'Secure Boot not supported (legacy BIOS / CSM)'
     }
 
     # Graphics driver
@@ -1321,7 +1315,7 @@ function Start-MainMenu($Info, $State) {
                Hint = 'Needed for Docker Desktop, WSL2 and Android emulators.' },
             @{ Label = 'OneDrive'; Status = (& $status $oneDrive); StatusColor = (& $color $oneDrive)
                Hint = 'Microsoft file sync.' },
-            @{ Label = 'Health check'; SpaceBefore = $true; Hint = 'Checks VBS, graphics driver and display refresh rate (read only).' },
+            @{ Label = 'Health check'; SpaceBefore = $true; Hint = 'Checks VBS, Secure Boot, graphics driver and display refresh rate (read only).' },
             @{ Label = 'Reapply optimizations'; Hint = 'Run it again after a major Windows update.' },
             @{ Label = 'Quit'; SpaceBefore = $true }
         )
