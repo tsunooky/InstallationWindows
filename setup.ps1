@@ -4,10 +4,11 @@
     Windows 11 optimization - post-installation script.
 
 .DESCRIPTION
-    Installs the base applications, applies the privacy, performance and debloat
-    settings of the InstallationWindows guide, manages the reversible modules
-    (Xbox, printing, WSL/virtualization, OneDrive, notifications) and runs a
-    read-only health check.
+    Installs the base applications if missing, applies the privacy, performance and
+    debloat settings of the InstallationWindows guide, applies the changes checked in
+    the list (Xbox, printing, WSL/virtualization, OneDrive, notifications...) and runs
+    a read-only health check. Every run does the same thing: run it again after a
+    major Windows update.
 
     Usage: from the USB key, right-click > "Run with PowerShell". The script elevates
     itself, copies itself to C:\ProgramData\OptimisationWindows and creates the
@@ -23,7 +24,6 @@
 
 $MinBuild      = 26100
 $DataDir       = Join-Path $env:ProgramData 'OptimisationWindows'
-$StatePath     = Join-Path $DataDir 'state.json'
 $TaskbarXml    = Join-Path $DataDir 'TaskbarLayout.xml'
 $InstalledCopy = Join-Path $DataDir 'setup.ps1'
 $ShortcutName  = 'Optimisation Windows.lnk'
@@ -57,6 +57,20 @@ $XboxStoreIds = [ordered]@{
     'Xbox'          = '9MV0B5HZVK9Z'
     'Xbox Game Bar' = '9NZKPSTSNW4P'
 }
+
+# Apps removed by the USB key that Windows Update or the Store may install again.
+$ReturningApps = [ordered]@{
+    'Microsoft.OutlookForWindows'  = 'Outlook'
+    'Microsoft.Copilot'            = 'Copilot'
+    'Microsoft.MicrosoftOfficeHub' = 'Microsoft 365'
+    'MSTeams'                      = 'Teams'
+    'Microsoft.Windows.DevHome'    = 'Dev Home'
+}
+
+# Optional Windows features of the modules.
+$PrintingFeatures      = @('Printing-PrintToPDFServices-Features', 'Printing-XPSServices-Features')
+$VirtualizationEnable  = @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform', 'HypervisorPlatform')
+$VirtualizationDisable = $VirtualizationEnable + @('Microsoft-Hyper-V-All', 'Containers-DisposableClientVM')
 
 # File types indexed by name and properties only (content not indexed).
 $PropertiesOnlyExtensions = @(
@@ -180,7 +194,7 @@ function Set-ServiceStartup {
     )
     $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
     if (-not $svc) { return $false }
-    if ($Stop -and $svc.Status -ne 'Stopped') { Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue }
+    if ($Stop -and $svc.Status -ne 'Stopped') { Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue -WarningAction SilentlyContinue }
     try {
         Set-Service -Name $Name -StartupType $Startup -ErrorAction Stop
     } catch {
@@ -188,7 +202,7 @@ function Set-ServiceStartup {
         $startValue = @{ 'Automatic' = 2; 'Manual' = 3; 'Disabled' = 4 }[$Startup]
         Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$Name" -Name 'Start' -Value $startValue
     }
-    if ($Start) { Start-Service -Name $Name -ErrorAction SilentlyContinue }
+    if ($Start) { Start-Service -Name $Name -ErrorAction SilentlyContinue -WarningAction SilentlyContinue }
     return $true
 }
 
@@ -237,6 +251,37 @@ function Uninstall-StoreApp([string[]]$Names) {
     if ($protected.Count -gt 0) { return (Skip ('protected by Windows, kept: {0}' -f (($protected | Select-Object -Unique) -join ', '))) }
 }
 
+# Optional features: one DISM query for the whole run (DISM is slow), updated after each change.
+$script:FeatureStates = $null
+function Get-FeatureStates {
+    if ($null -eq $script:FeatureStates) {
+        $script:FeatureStates = @{}
+        foreach ($f in @(Get-WindowsOptionalFeature -Online -ErrorAction SilentlyContinue)) { $script:FeatureStates[$f.FeatureName] = [string]$f.State }
+    }
+    return $script:FeatureStates
+}
+
+function Test-FeatureEnabled([string[]]$Names) {
+    $states = Get-FeatureStates
+    return [bool]($Names | Where-Object { $states[$_] -like 'Enable*' })
+}
+
+# Features missing from this edition (Hyper-V and Sandbox on Home) are ignored.
+function Set-Features([string[]]$Names, [bool]$Enabled) {
+    $states = Get-FeatureStates
+    foreach ($name in $Names) {
+        if (-not $states.ContainsKey($name)) { continue }
+        $on = $states[$name] -like 'Enable*'
+        if ($Enabled -and -not $on) {
+            Enable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart | Out-Null
+            $states[$name] = 'EnablePending'
+        } elseif (-not $Enabled -and $on) {
+            Disable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart | Out-Null
+            $states[$name] = 'DisablePending'
+        }
+    }
+}
+
 # Windows features cannot be changed reliably while an update waits for a restart.
 function Test-RebootPending {
     $keys = @(
@@ -245,8 +290,6 @@ function Test-RebootPending {
     )
     return [bool]($keys | Where-Object { Test-Path -LiteralPath $_ })
 }
-
-$RebootPendingMessage = 'A restart is pending (Windows Update). Restart the PC, then try again.'
 
 # Keeps a copy of the script in ProgramData, so the Desktop shortcut works without the USB key.
 # Running a newer setup.ps1 from anywhere refreshes the copy; an older one (old USB key) leaves it alone.
@@ -265,7 +308,7 @@ function New-DesktopShortcut {
     $link.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $InstalledCopy
     $link.WorkingDirectory = $DataDir
     $link.IconLocation = "$powershell,0"
-    $link.Description = 'Windows optimization: modules, health check, reapply'
+    $link.Description = 'Windows optimization'
     $link.Save()
 }
 
@@ -306,7 +349,7 @@ function Wait-Key([string]$Message = 'Press any key to continue...') {
 }
 
 # Generic arrow-key menu. Header: lines printed above the items.
-# Items: hashtables with Label, optional Status, StatusColor, Hint and SpaceBefore.
+# Items: hashtables with Label and optional Hint.
 # Returns the selected index.
 function Read-Menu {
     param([string[]]$Header, [object[]]$Items, [int]$Default = 0)
@@ -320,17 +363,10 @@ function Read-Menu {
         }
         for ($i = 0; $i -lt $Items.Count; $i++) {
             $item = $Items[$i]
-            if ($item.SpaceBefore) { Write-Host '' }
             $selected = ($i -eq $index)
             $prefix = if ($selected) { '  > ' } else { '    ' }
             $color = if ($selected) { 'Cyan' } else { 'Gray' }
-            Write-Host ($prefix + ([string]$item.Label).PadRight(32)) -ForegroundColor $color -NoNewline
-            if ($item.Status) {
-                $statusColor = if ($item.StatusColor) { $item.StatusColor } else { 'DarkGray' }
-                Write-Host $item.Status -ForegroundColor $statusColor
-            } else {
-                Write-Host ''
-            }
+            Write-Host ($prefix + $item.Label) -ForegroundColor $color
         }
         Write-Host ''
         if ($Items[$index].Hint) { Write-Host ('  ' + $Items[$index].Hint) -ForegroundColor Yellow }
@@ -413,39 +449,6 @@ function Invoke-Step {
 }
 
 # ---------------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------------
-
-function Get-State {
-    if (-not (Test-Path -LiteralPath $StatePath)) { return $null }
-    try { return (Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
-}
-
-function Save-State($State) {
-    $State | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $StatePath -Encoding UTF8
-}
-
-# The user's choices are the reference: Reapply enforces them even if Windows reinstalled
-# an app or re-enabled a service. The real state is only used for display.
-function Get-Choices($State) {
-    $choices = [ordered]@{
-        Xbox = $false; KeepGameBar = $false; Printing = $false; Virtualization = $false
-        OneDrive = $false; Notifications = $false; Steam = $false; Discord = $false
-    }
-    if ($State -and $State.Choices) {
-        foreach ($name in @($choices.Keys)) {
-            $value = $State.Choices.$name
-            if ($null -ne $value) { $choices[$name] = [bool]$value }
-        }
-    }
-    return $choices
-}
-
-function Save-Choices($Choices) {
-    Save-State ([ordered]@{ InstallCompleted = $true; Choices = $Choices })
-}
-
-# ---------------------------------------------------------------------------
 # Hardware and system detection
 # ---------------------------------------------------------------------------
 
@@ -496,7 +499,8 @@ function Get-SystemInfo {
     [pscustomobject]@{
         CpuName        = $cpu.Name.Trim()
         CpuVendor      = $cpuVendor
-        IsDualCcdX3D   = ($cpu.Name -match '7900X3D|7950X3D|9900X3D|9950X3D')
+        # Every X3D with more than 8 cores has two CCDs (7900X3D to 9950X3D, 7945HX3D, 9955HX3D).
+        IsDualCcdX3D   = ($cpu.Name -match 'X3D' -and $cpu.NumberOfCores -gt 8)
         Gpus           = $gpus
         HasDiscreteArc = [bool]($gpus | Where-Object { $_.Vendor -eq 'Intel' -and $_.IsDiscrete })
         IsLaptop       = $isLaptop
@@ -528,24 +532,29 @@ function Get-PrintingEnabled {
     return ($svc -and $svc.StartType -ne 'Disabled')
 }
 
+# The hypervisor also runs for VBS / memory integrity: "enabled" when it runs or when a feature is on.
 function Get-VirtualizationEnabled {
-    # Docker or emulator installers can enable the features while the hypervisor stays off at boot:
-    # report "enabled" only when the hypervisor actually runs.
-    if (-not (Get-CimInstance -ClassName Win32_ComputerSystem).HypervisorPresent) { return $false }
-    return (Get-VirtualizationFeaturesEnabled)
-}
-
-function Get-VirtualizationFeaturesEnabled {
-    foreach ($feature in 'VirtualMachinePlatform', 'Microsoft-Windows-Subsystem-Linux', 'Microsoft-Hyper-V-All') {
-        $f = Get-WindowsOptionalFeature -Online -FeatureName $feature -ErrorAction SilentlyContinue
-        if ($f -and $f.State -eq 'Enabled') { return $true }
-    }
-    return $false
+    if ((Get-CimInstance -ClassName Win32_ComputerSystem).HypervisorPresent) { return $true }
+    return (Test-FeatureEnabled $VirtualizationDisable)
 }
 
 function Get-OneDriveInstalled {
     return (Test-Path -LiteralPath "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDrive.exe") -or
            (Test-Path -LiteralPath "$env:ProgramFiles\Microsoft OneDrive\OneDrive.exe")
+}
+
+function Test-SteamInstalled {
+    $exe = Get-RegValue 'HKCU:\Software\Valve\Steam' 'SteamExe'
+    return ($exe -and (Test-Path -LiteralPath $exe)) -or (Test-Path -LiteralPath "${env:ProgramFiles(x86)}\Steam\steam.exe")
+}
+
+function Test-DiscordInstalled {
+    return (Test-Path -LiteralPath "$env:LOCALAPPDATA\Discord\Update.exe")
+}
+
+function Get-ReturningApps {
+    $installed = @(Get-AppxPackage -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    return @($ReturningApps.Keys | Where-Object { $installed -contains $_ })
 }
 
 # ---------------------------------------------------------------------------
@@ -558,22 +567,21 @@ function Initialize-Winget {
     return [bool](Get-Command -Name 'winget' -ErrorAction SilentlyContinue)
 }
 
-function Test-WingetInstalled([string]$Id, [string]$Source = 'winget') {
-    $ErrorActionPreference = 'Continue'
-    & winget list --id $Id --exact --source $Source --accept-source-agreements --disable-interactivity 2>&1 | Out-Null
-    return ($LASTEXITCODE -eq 0)
-}
+# One winget call per package: "install" already detects an installed package.
+$WingetAlreadyInstalled = -1978335135  # 0x8A150061 (with --no-upgrade)
+$WingetNoUpdate         = -1978335189  # 0x8A15002B
+$WingetNotFound         = -1978335212  # 0x8A150014
 
 function Install-WingetPackage([string]$Id, [string]$Source = 'winget') {
-    if (Test-WingetInstalled -Id $Id -Source $Source) { return (Skip 'already installed') }
-    $arguments = @('install', '--id', $Id, '--exact', '--source', $Source, '--silent',
+    $arguments = @('install', '--id', $Id, '--exact', '--source', $Source, '--silent', '--no-upgrade',
                    '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
-    Invoke-Native -File 'winget' -Arguments $arguments | Out-Null
+    Invoke-Native -File 'winget' -Arguments $arguments -OkCodes @(0, $WingetAlreadyInstalled, $WingetNoUpdate) | Out-Null
+    if ($LASTEXITCODE -ne 0) { return (Skip 'already installed') }
 }
 
 function Uninstall-WingetPackage([string]$Id) {
-    if (-not (Test-WingetInstalled -Id $Id)) { return (Skip 'not installed') }
-    Invoke-Native -File 'winget' -Arguments @('uninstall', '--id', $Id, '--exact', '--silent', '--accept-source-agreements', '--disable-interactivity') | Out-Null
+    Invoke-Native -File 'winget' -Arguments @('uninstall', '--id', $Id, '--exact', '--silent', '--accept-source-agreements', '--disable-interactivity') -OkCodes @(0, $WingetNotFound) | Out-Null
+    if ($LASTEXITCODE -ne 0) { return (Skip 'not installed') }
 }
 
 # ---------------------------------------------------------------------------
@@ -583,6 +591,8 @@ function Uninstall-WingetPackage([string]$Id) {
 function Set-FirefoxConfig {
     $firefoxDir = Join-Path $env:ProgramFiles 'Mozilla Firefox'
     if (-not (Test-Path -LiteralPath (Join-Path $firefoxDir 'firefox.exe'))) { return (Skip 'Firefox not found') }
+    if ((Test-Path -LiteralPath (Join-Path $firefoxDir 'firefox.cfg')) -and
+        (Test-Path -LiteralPath (Join-Path $firefoxDir 'distribution\extensions\uBlock0@raymondhill.net.xpi'))) { return (Skip 'already done') }
     $utf8 = New-Object System.Text.UTF8Encoding($false)
 
     # Preferences through AutoConfig instead of enterprise policies: no "managed by your
@@ -689,7 +699,7 @@ function Disable-StartupEntry([string]$Name) {
     Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' $Name $bytes 'Binary'
 }
 
-function Invoke-AppSteps($Choices) {
+function Invoke-AppSteps($Selected) {
     Write-Section 'Applications'
 
     if (-not (Initialize-Winget)) {
@@ -705,9 +715,15 @@ function Invoke-AppSteps($Choices) {
             Invoke-Native -File 'winget' -Arguments @('source', 'update', '--disable-interactivity') | Out-Null
         }
     }
-    Invoke-Step 'Firefox' { Install-WingetPackage 'Mozilla.Firefox.fr' }
+    $script:FirefoxInstalledNow = $false
+    Invoke-Step 'Firefox' {
+        $result = Install-WingetPackage 'Mozilla.Firefox.fr'
+        if (-not $result) { $script:FirefoxInstalledNow = $true }
+        $result
+    }
     Invoke-Step 'Firefox: uBlock Origin and settings' { Set-FirefoxConfig }
-    Invoke-Step 'Firefox: pin to the taskbar' { Add-FirefoxToTaskbar }
+    # Only right after the install: the user may have changed the pins since.
+    if ($script:FirefoxInstalledNow) { Invoke-Step 'Firefox: pin to the taskbar' { Add-FirefoxToTaskbar } }
     Invoke-Step 'VLC' {
         $result = Install-WingetPackage 'VideoLAN.VLC'
         Remove-Shortcut @('VLC media player.lnk')
@@ -715,11 +731,11 @@ function Invoke-AppSteps($Choices) {
     }
     Invoke-Step '7-Zip' { Install-WingetPackage '7zip.7zip' }
 
-    if ($Choices.Steam) {
+    if ($Selected.Steam) {
         Invoke-Step 'Steam' { Install-WingetPackage 'Valve.Steam' }
         Invoke-Step 'Steam: no launch at startup' { Disable-StartupEntry 'Steam' }
     }
-    if ($Choices.Discord) {
+    if ($Selected.Discord) {
         Invoke-Step 'Discord' { Install-WingetPackage 'Discord.Discord' }
         Invoke-Step 'Discord: no launch at startup' { Disable-StartupEntry 'Discord' }
     }
@@ -810,7 +826,7 @@ function Invoke-AiSteps {
     }
 }
 
-function Invoke-SystemSteps($Info, $Choices) {
+function Invoke-SystemSteps($Info) {
     Write-Section 'System and services'
 
     Invoke-Step 'Hibernation' {
@@ -820,9 +836,11 @@ function Invoke-SystemSteps($Info, $Choices) {
 
     Invoke-Step 'Background apps' {
         $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy'
+        # Xbox app and Game Bar keep working in the background when they are installed.
         $allowed = @('Microsoft.SecHealthUI_8wekyb3d8bbwe')
-        if ($Choices.Xbox) { $allowed += 'Microsoft.GamingApp_8wekyb3d8bbwe', 'Microsoft.XboxGamingOverlay_8wekyb3d8bbwe' }
-        elseif ($Choices.KeepGameBar) { $allowed += 'Microsoft.XboxGamingOverlay_8wekyb3d8bbwe' }
+        foreach ($name in 'Microsoft.GamingApp', 'Microsoft.XboxGamingOverlay') {
+            if (Get-AppxPackage -Name $name -ErrorAction SilentlyContinue) { $allowed += "${name}_8wekyb3d8bbwe" }
+        }
         Set-RegValue $key 'LetAppsRunInBackground' 2
         Set-RegValue $key 'LetAppsRunInBackground_ForceAllowTheseApps' ([string[]]$allowed) 'MultiString'
     }
@@ -1037,9 +1055,8 @@ function Set-Notifications([bool]$Enabled) {
     }
 }
 
-function Invoke-NotificationSteps($Choices) {
+function Invoke-NotificationSteps {
     Write-Section 'Notifications'
-    Set-Notifications ([bool]$Choices.Notifications)
     Invoke-Step 'Lock screen notifications, tips and welcome screens' {
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings' 'NOC_GLOBAL_SETTING_ALLOW_TOASTS_ABOVE_LOCK' 0
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement' 'ScoobeSystemSettingEnabled' 0
@@ -1049,7 +1066,7 @@ function Invoke-NotificationSteps($Choices) {
 }
 
 # ---------------------------------------------------------------------------
-# Reversible modules
+# Changes checked in the list
 # ---------------------------------------------------------------------------
 
 function Disable-Xbox([bool]$KeepGameBar = $false) {
@@ -1077,43 +1094,24 @@ function Enable-Xbox {
 
 function Disable-Printing {
     Invoke-Step 'Print Spooler' { [void](Set-ServiceStartup -Name 'Spooler' -Startup Disabled -Stop) }
-    Invoke-Step 'PDF and XPS virtual printers' {
-        foreach ($feature in 'Printing-PrintToPDFServices-Features', 'Printing-XPSServices-Features') {
-            $f = Get-WindowsOptionalFeature -Online -FeatureName $feature -ErrorAction SilentlyContinue
-            if ($f -and $f.State -eq 'Enabled') { Disable-WindowsOptionalFeature -Online -FeatureName $feature -NoRestart | Out-Null }
-        }
-    }
+    Invoke-Step 'PDF and XPS virtual printers' { Set-Features $PrintingFeatures $false }
 }
 
 function Enable-Printing {
     Invoke-Step 'Print Spooler' { [void](Set-ServiceStartup -Name 'Spooler' -Startup Automatic -Start) }
-    Invoke-Step 'PDF and XPS virtual printers' {
-        foreach ($feature in 'Printing-PrintToPDFServices-Features', 'Printing-XPSServices-Features') {
-            $f = Get-WindowsOptionalFeature -Online -FeatureName $feature -ErrorAction SilentlyContinue
-            if ($f -and $f.State -ne 'Enabled') { Enable-WindowsOptionalFeature -Online -FeatureName $feature -NoRestart | Out-Null }
-        }
-    }
+    Invoke-Step 'PDF and XPS virtual printers' { Set-Features $PrintingFeatures $true }
 }
 
 function Disable-Virtualization {
-    Invoke-Step 'WSL, virtualization platforms, Hyper-V and Sandbox' {
-        foreach ($feature in 'Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform', 'HypervisorPlatform', 'Microsoft-Hyper-V-All', 'Containers-DisposableClientVM') {
-            $f = Get-WindowsOptionalFeature -Online -FeatureName $feature -ErrorAction SilentlyContinue
-            if ($f -and $f.State -eq 'Enabled') { Disable-WindowsOptionalFeature -Online -FeatureName $feature -NoRestart | Out-Null }
-        }
-    }
+    Invoke-Step 'WSL, virtualization platforms, Hyper-V and Sandbox' { Set-Features $VirtualizationDisable $false }
     Invoke-Step 'Hypervisor at boot' {
         Invoke-Native -File 'bcdedit.exe' -Arguments @('/set', 'hypervisorlaunchtype', 'off') | Out-Null
     }
 }
 
 function Enable-Virtualization {
-    Invoke-Step 'WSL and virtualization platforms' {
-        foreach ($feature in 'Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform', 'HypervisorPlatform') {
-            $f = Get-WindowsOptionalFeature -Online -FeatureName $feature -ErrorAction SilentlyContinue
-            if ($f -and $f.State -ne 'Enabled') { Enable-WindowsOptionalFeature -Online -FeatureName $feature -NoRestart | Out-Null }
-        }
-    }
+    # Hyper-V and Sandbox (Pro editions) are not turned back on: Windows features, if needed.
+    Invoke-Step 'WSL and virtualization platforms' { Set-Features $VirtualizationEnable $true }
     Invoke-Step 'Hypervisor at boot' {
         Invoke-Native -File 'bcdedit.exe' -Arguments @('/set', 'hypervisorlaunchtype', 'auto') | Out-Null
     }
@@ -1132,11 +1130,57 @@ function Disable-OneDrive {
     }
 }
 
-function Invoke-ModuleChoices($Choices) {
-    Write-Section 'Modules'
-    if (-not $Choices.Xbox) { Disable-Xbox -KeepGameBar ([bool]$Choices.KeepGameBar) }
-    if (-not $Choices.Printing) { Disable-Printing }
-    if (-not $Choices.Virtualization) { Disable-Virtualization }
+function Remove-ReturningApps {
+    Invoke-Step 'Remove apps installed again' { Uninstall-StoreApp @(Get-ReturningApps) }
+}
+
+# The list shows, for each item, the action that changes its current state. Nothing is checked:
+# an unchecked item is left as it is.
+function Get-ChangeItems {
+    $items = New-Object System.Collections.Generic.List[object]
+    $add = { param($Id, $Label, $Hint) $items.Add(@{ Id = $Id; Label = $Label; Hint = $Hint; Value = $false }) }
+
+    if (Get-XboxEnabled) { & $add 'XboxOff' 'Remove Xbox (Xbox app, Game Pass, Game Bar)' 'Controllers keep working. Can be installed again from this list.' }
+    else { & $add 'XboxOn' 'Install Xbox (Xbox app, Game Bar)' 'Needed for Game Pass and the Game Bar.' }
+
+    if (Get-PrintingEnabled) { & $add 'PrintingOff' 'Disable printing' 'Print spooler and PDF/XPS virtual printers.' }
+    else { & $add 'PrintingOn' 'Enable printing' 'Print spooler and PDF/XPS virtual printers.' }
+
+    if (Get-VirtualizationEnabled) { & $add 'VirtOff' 'Disable WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators stop working.' }
+    else { & $add 'VirtOn' 'Enable WSL / virtualization' 'Needed for Docker Desktop, WSL2 and Android emulators.' }
+
+    if (Get-OneDriveInstalled) { & $add 'OneDriveOff' 'Uninstall OneDrive' 'Microsoft file sync.' }
+    else { & $add 'OneDriveOn' 'Install OneDrive' 'Microsoft file sync.' }
+
+    if (Get-NotificationsEnabled) { & $add 'NotificationsOff' 'Turn off notifications' 'No notifications at all: Discord, Steam, Windows Update, Windows Security.' }
+    else { & $add 'NotificationsOn' 'Turn on notifications' 'Discord, Steam, Windows Update, Windows Security.' }
+
+    $returning = @(Get-ReturningApps)
+    if ($returning.Count -gt 0) {
+        $names = ($returning | ForEach-Object { $ReturningApps[$_] }) -join ', '
+        & $add 'ReturningApps' "Remove apps installed again ($names)" 'Removed by the USB key, installed again since by Windows Update or the Store.'
+    }
+
+    if (-not (Test-SteamInstalled)) { & $add 'Steam' 'Install Steam' 'Installed with winget, not launched at startup.' }
+    if (-not (Test-DiscordInstalled)) { & $add 'Discord' 'Install Discord' 'Installed with winget, not launched at startup.' }
+    return $items.ToArray()
+}
+
+function Invoke-ChangeSteps($Selected, [bool]$KeepGameBar) {
+    $changes = @($Selected.Keys | Where-Object { $_ -notin 'Steam', 'Discord' })
+    if ($changes.Count -eq 0) { return }
+    Write-Section 'Changes'
+    if ($Selected.XboxOff) { Disable-Xbox -KeepGameBar $KeepGameBar }
+    if ($Selected.XboxOn) { Enable-Xbox }
+    if ($Selected.PrintingOff) { Disable-Printing }
+    if ($Selected.PrintingOn) { Enable-Printing }
+    if ($Selected.VirtOff) { Disable-Virtualization }
+    if ($Selected.VirtOn) { Enable-Virtualization }
+    if ($Selected.OneDriveOff) { Disable-OneDrive }
+    if ($Selected.OneDriveOn) { Enable-OneDrive }
+    if ($Selected.NotificationsOff) { Set-Notifications $false }
+    if ($Selected.NotificationsOn) { Set-Notifications $true }
+    if ($Selected.ReturningApps) { Remove-ReturningApps }
 }
 
 # ---------------------------------------------------------------------------
@@ -1319,17 +1363,6 @@ function Show-HealthCheck($Info) {
 # Flows
 # ---------------------------------------------------------------------------
 
-function Invoke-AllOptimizations($Info, $Choices) {
-    Invoke-PrivacySteps
-    Invoke-AiSteps
-    Invoke-SystemSteps $Info $Choices
-    Invoke-PowerSteps $Info
-    Invoke-GamingSteps
-    Invoke-SearchSteps
-    Invoke-EdgeSteps
-    Invoke-InterfaceSteps
-}
-
 function Write-Summary {
     Write-Host ''
     if ($script:Failures.Count -eq 0) {
@@ -1356,207 +1389,58 @@ function Confirm-Hardware($Info) {
 
     $Info.IsLaptop = ((Read-Menu -Header 'Type of PC?' -Items @(@{ Label = 'Desktop' }, @{ Label = 'Laptop' })) -eq 1)
     if ($Info.CpuVendor -eq 'AMD') {
-        $Info.IsDualCcdX3D = Read-YesNo 'Is it a dual-CCD X3D (7900X3D, 7950X3D, 9900X3D, 9950X3D)?' $Info.IsDualCcdX3D
+        $Info.IsDualCcdX3D = Read-YesNo 'Is it an X3D with more than 8 cores (7900X3D, 9950X3D, 9955HX3D...)?' $Info.IsDualCcdX3D
     }
     return $Info
 }
 
-function Start-FirstRun($Info) {
-    if (Test-RebootPending) { Wait-Exit $RebootPendingMessage }
+# Same run every time: applications installed if missing, all optimizations applied again,
+# and only the changes checked in the list.
+function Start-Run($Info) {
+    if (Test-RebootPending) { Wait-Exit 'A restart is pending (Windows Update). Restart the PC, then run the script again.' }
     $Info = Confirm-Hardware $Info
 
-    $items = @(
-        @{ Label = 'Xbox (Game Pass, Xbox app, Game Bar)'; Value = $false
-           Hint = 'Unchecked: Xbox apps removed (reversible from the menu). Controllers keep working.' },
-        @{ Label = 'Printing'; Value = $false
-           Hint = 'Unchecked: print spooler and virtual printers disabled (reversible).' },
-        @{ Label = 'WSL / Virtualization'; Value = $false
-           Hint = 'Unchecked: Docker Desktop, WSL2 and Android emulators will not work (reversible).' },
-        @{ Label = 'Notifications'; Value = $false
-           Hint = 'Unchecked: no notifications at all (Discord, Steam, Windows Update, Windows Security). Reversible.' },
-        @{ Label = 'Install Steam'; Value = $false
-           Hint = 'Installed with winget, not launched at startup.' },
-        @{ Label = 'Install Discord'; Value = $false
-           Hint = 'Installed with winget, not launched at startup.' }
-    )
-    $items = Read-Checkboxes -Header 'Check what you use' -Items $items
+    Write-Title
+    Write-Host '  Reading the current state...' -ForegroundColor DarkGray
+    $items = Read-Checkboxes -Header @('Check what you want to change', 'Nothing checked: optimizations only.') -Items (Get-ChangeItems)
+    $selected = @{}
+    foreach ($item in $items) { if ($item.Value) { $selected[$item.Id] = $true } }
 
-    $choices = Get-Choices $null
-    $choices.Xbox           = [bool]$items[0].Value
-    $choices.Printing       = [bool]$items[1].Value
-    $choices.Virtualization = [bool]$items[2].Value
-    $choices.Notifications  = [bool]$items[3].Value
-    $choices.Steam          = [bool]$items[4].Value
-    $choices.Discord        = [bool]$items[5].Value
-
-    if (-not $choices.Xbox -and $Info.IsDualCcdX3D) {
-        $choices.KeepGameBar = Read-YesNo @(
+    $keepGameBar = $false
+    if ($selected.XboxOff -and $Info.IsDualCcdX3D) {
+        $keepGameBar = Read-YesNo @(
             ('Your {0} uses the Game Bar to send games to the right CCD.' -f $Info.CpuName),
             'Keep the Game Bar?'
         ) $true
     }
-
-    $label = { param($keep) if ($keep) { 'kept' } else { 'disabled (reversible)' } }
-    $installed = { param($on) if ($on) { 'installed' } else { 'not installed' } }
-    $xboxLine = 'Xbox                  ' + (& $label $choices.Xbox)
-    if ($choices.KeepGameBar) { $xboxLine += ', Game Bar kept' }
-    $summary = @(
-        'Summary',
-        '',
-        $xboxLine,
-        ('Printing              ' + (& $label $choices.Printing)),
-        ('WSL / Virtualization  ' + (& $label $choices.Virtualization)),
-        ('Notifications         ' + (& $label $choices.Notifications)),
-        ('Steam                 ' + (& $installed $choices.Steam)),
-        ('Discord               ' + (& $installed $choices.Discord)),
-        '',
-        'Start the optimization?'
-    )
-    if (-not (Read-YesNo $summary $true)) { Wait-Exit 'Nothing was changed.' }
 
     Write-Title
     Write-Section 'Script'
     Invoke-Step 'Desktop shortcut "Optimisation Windows"' {
         Update-InstalledCopy
         New-DesktopShortcut
+        # Left by the earlier version of the script.
+        Remove-Item -LiteralPath (Join-Path $DataDir 'state.json') -Force -ErrorAction SilentlyContinue
     }
-    Invoke-AppSteps $choices
-    Invoke-AllOptimizations $Info $choices
-    Invoke-ModuleChoices $choices
-    Invoke-NotificationSteps $choices
+    Invoke-AppSteps $selected
+    Invoke-ChangeSteps $selected $keepGameBar
+    Invoke-PrivacySteps
+    Invoke-AiSteps
+    Invoke-SystemSteps $Info
+    Invoke-PowerSteps $Info
+    Invoke-GamingSteps
+    Invoke-SearchSteps
+    Invoke-EdgeSteps
+    Invoke-InterfaceSteps
+    Invoke-NotificationSteps
 
     # Last, so the Store does not update App Installer while winget is installing apps.
     Write-Section 'Microsoft Store'
     Invoke-Step 'Store app updates (in the background)' { Start-StoreUpdates }
 
-    Save-Choices $choices
-
     Show-HealthCheck $Info
     Write-Summary
     Wait-Exit 'Restart the PC to apply all settings.'
-}
-
-# A module turned on since the last run (Docker enabling WSL, Xbox app reinstalled, notifications
-# switched on in Settings...) is not disabled silently: the user decides, and the choice is saved.
-function Resolve-ChoiceDrift($Choices) {
-    $checks = @(
-        @{ Key = 'Xbox'; Label = 'Xbox'; Test = { Get-XboxEnabled } },
-        @{ Key = 'Printing'; Label = 'Printing'; Test = { Get-PrintingEnabled } },
-        @{ Key = 'Virtualization'; Label = 'WSL / Virtualization'; Test = { Get-VirtualizationFeaturesEnabled } },
-        @{ Key = 'OneDrive'; Label = 'OneDrive'; Test = { Get-OneDriveInstalled } },
-        @{ Key = 'Notifications'; Label = 'Notifications'; Test = { Get-NotificationsEnabled } }
-    )
-    $changed = $false
-    foreach ($check in $checks) {
-        if ($Choices[$check.Key] -or -not (& $check.Test)) { continue }
-        $keep = Read-YesNo @(
-            ('{0} was turned on outside the script (by an app, an update or Windows settings).' -f $check.Label),
-            'Keep it on? No: it is disabled again.'
-        ) $true
-        if ($keep) { $Choices[$check.Key] = $true; $changed = $true }
-    }
-    if ($changed) { Save-Choices $Choices }
-}
-
-function Invoke-Reapply($Info, $Choices) {
-    Resolve-ChoiceDrift $Choices
-    Write-Title
-    Invoke-AllOptimizations $Info $Choices
-    Write-Section 'Modules'
-    if (-not $Choices.Xbox) { Disable-Xbox -KeepGameBar $Choices.KeepGameBar }
-    if (-not $Choices.Printing) { Disable-Printing }
-    if (-not $Choices.Virtualization) { Disable-Virtualization }
-    if (-not $Choices.OneDrive -and (Get-OneDriveInstalled)) { Disable-OneDrive }
-    Write-Section 'Applications'
-    Invoke-Step 'Firefox: uBlock Origin and settings' { Set-FirefoxConfig }
-    Invoke-NotificationSteps $Choices
-    Write-Summary
-    Wait-Key 'Restart the PC to apply all settings. Press any key to go back to the menu.'
-}
-
-function Invoke-ModuleToggle([string]$Name, [bool]$Enabled, [scriptblock]$OnDisable, [scriptblock]$OnEnable, [string]$Warning) {
-    $state = if ($Enabled) { 'enabled' } else { 'disabled' }
-    $action = if ($Enabled) { 'Disable' } else { 'Enable' }
-    $header = @("$Name module: currently $state.")
-    if ($Warning -and $Enabled) { $header += $Warning }
-    $header += "$action it?"
-    if (-not (Read-YesNo $header $true)) { return $false }
-    Write-Title
-    if ($Enabled) { & $OnDisable } else { & $OnEnable }
-    Write-Summary
-    Wait-Key 'Restart recommended. Press any key to go back to the menu.'
-    return $true
-}
-
-function Start-MainMenu($Info, $State) {
-    $choices = Get-Choices $State
-    while ($true) {
-        Write-Title
-        Write-Host '  Reading system state...' -ForegroundColor DarkGray
-        $xbox = Get-XboxEnabled
-        $printing = Get-PrintingEnabled
-        $virtualization = Get-VirtualizationEnabled
-        $oneDrive = Get-OneDriveInstalled
-        $notifications = Get-NotificationsEnabled
-
-        $status = { param($on) if ($on) { 'enabled' } else { 'disabled' } }
-        $color = { param($on) if ($on) { 'Green' } else { 'DarkGray' } }
-        $items = @(
-            @{ Label = 'Xbox'; Status = (& $status $xbox); StatusColor = (& $color $xbox)
-               Hint = 'Xbox app, Game Pass and Game Bar.' },
-            @{ Label = 'Printing'; Status = (& $status $printing); StatusColor = (& $color $printing)
-               Hint = 'Print spooler and PDF/XPS virtual printers.' },
-            @{ Label = 'WSL / Virtualization'; Status = (& $status $virtualization); StatusColor = (& $color $virtualization)
-               Hint = 'Needed for Docker Desktop, WSL2 and Android emulators.' },
-            @{ Label = 'OneDrive'; Status = (& $status $oneDrive); StatusColor = (& $color $oneDrive)
-               Hint = 'Microsoft file sync.' },
-            @{ Label = 'Notifications'; Status = (& $status $notifications); StatusColor = (& $color $notifications)
-               Hint = 'All notifications: Discord, Steam, Windows Update, Windows Security.' },
-            @{ Label = 'Health check'; SpaceBefore = $true; Hint = 'Checks VBS, Secure Boot, RAM speed, integrated graphics, graphics driver and refresh rate (read only).' },
-            @{ Label = 'Reapply optimizations'; Hint = 'Run it again after a major Windows update.' },
-            @{ Label = 'Quit'; SpaceBefore = $true }
-        )
-
-        $choice = Read-Menu -Items $items
-        $script:Failures.Clear()
-        switch ($choice) {
-            0 {
-                $keepGameBar = $false
-                if ($xbox -and $Info.IsDualCcdX3D) {
-                    $keepGameBar = Read-YesNo @('Your CPU uses the Game Bar to send games to the right CCD.', 'Keep the Game Bar?') $true
-                }
-                if (Invoke-ModuleToggle 'Xbox' $xbox { Disable-Xbox -KeepGameBar $keepGameBar } { Enable-Xbox } '') {
-                    $choices.Xbox = -not $xbox; $choices.KeepGameBar = $keepGameBar; Save-Choices $choices
-                }
-            }
-            { $_ -in 1, 2, 6 -and (Test-RebootPending) } {
-                Write-Title; Wait-Key $RebootPendingMessage; break
-            }
-            1 {
-                if (Invoke-ModuleToggle 'Printing' $printing { Disable-Printing } { Enable-Printing } '') {
-                    $choices.Printing = -not $printing; Save-Choices $choices
-                }
-            }
-            2 {
-                if (Invoke-ModuleToggle 'WSL / Virtualization' $virtualization { Disable-Virtualization } { Enable-Virtualization } 'Docker Desktop, WSL2 and Android emulators will stop working.') {
-                    $choices.Virtualization = -not $virtualization; Save-Choices $choices
-                }
-            }
-            3 {
-                if (Invoke-ModuleToggle 'OneDrive' $oneDrive { Disable-OneDrive } { Enable-OneDrive } '') {
-                    $choices.OneDrive = -not $oneDrive; Save-Choices $choices
-                }
-            }
-            4 {
-                if (Invoke-ModuleToggle 'Notifications' $notifications { Set-Notifications $false } { Set-Notifications $true } '') {
-                    $choices.Notifications = -not $notifications; Save-Choices $choices
-                }
-            }
-            5 { Write-Title; Show-HealthCheck $Info; Wait-Key }
-            6 { if (Read-YesNo 'Reapply all optimizations?' $true) { Invoke-Reapply $Info $choices } }
-            7 { exit }
-        }
-    }
 }
 
 # ---------------------------------------------------------------------------
@@ -1567,13 +1451,4 @@ Write-Title
 Write-Host '  Detecting hardware...' -ForegroundColor DarkGray
 $systemInfo = Get-SystemInfo
 
-$state = Get-State
-if ($null -eq $state -or -not $state.InstallCompleted) {
-    Start-FirstRun $systemInfo
-} else {
-    try {
-        Update-InstalledCopy
-        if (-not (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Desktop')) $ShortcutName))) { New-DesktopShortcut }
-    } catch { $null = $_ }
-    Start-MainMenu $systemInfo $state
-}
+Start-Run $systemInfo
