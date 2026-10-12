@@ -137,15 +137,6 @@ if ([Environment]::OSVersion.Version.Build -lt $MinBuild) {
     Wait-Exit ('Windows 11 24H2 or newer is required (build {0} detected, {1} minimum).' -f [Environment]::OSVersion.Version.Build, $MinBuild)
 }
 
-# Windows features cannot be changed reliably while an update waits for a restart.
-$rebootKeys = @(
-    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending',
-    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
-)
-if ($rebootKeys | Where-Object { Test-Path -LiteralPath $_ }) {
-    Wait-Exit 'A restart is pending (Windows Update). Restart the PC, then run the script again.'
-}
-
 if (-not (Test-Path -LiteralPath $DataDir)) { New-Item -Path $DataDir -ItemType Directory -Force | Out-Null }
 
 # ---------------------------------------------------------------------------
@@ -246,10 +237,23 @@ function Uninstall-StoreApp([string[]]$Names) {
     if ($protected.Count -gt 0) { return (Skip ('protected by Windows, kept: {0}' -f (($protected | Select-Object -Unique) -join ', '))) }
 }
 
+# Windows features cannot be changed reliably while an update waits for a restart.
+function Test-RebootPending {
+    $keys = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+    )
+    return [bool]($keys | Where-Object { Test-Path -LiteralPath $_ })
+}
+
+$RebootPendingMessage = 'A restart is pending (Windows Update). Restart the PC, then try again.'
+
 # Keeps a copy of the script in ProgramData, so the Desktop shortcut works without the USB key.
-# Running a newer setup.ps1 from anywhere refreshes the copy.
+# Running a newer setup.ps1 from anywhere refreshes the copy; an older one (old USB key) leaves it alone.
 function Update-InstalledCopy {
     if ([string]::Equals($PSCommandPath, $InstalledCopy, [StringComparison]::OrdinalIgnoreCase)) { return }
+    if ((Test-Path -LiteralPath $InstalledCopy) -and
+        (Get-Item -LiteralPath $InstalledCopy).LastWriteTimeUtc -gt (Get-Item -LiteralPath $PSCommandPath).LastWriteTimeUtc) { return }
     Copy-Item -LiteralPath $PSCommandPath -Destination $InstalledCopy -Force
 }
 
@@ -528,6 +532,10 @@ function Get-VirtualizationEnabled {
     # Docker or emulator installers can enable the features while the hypervisor stays off at boot:
     # report "enabled" only when the hypervisor actually runs.
     if (-not (Get-CimInstance -ClassName Win32_ComputerSystem).HypervisorPresent) { return $false }
+    return (Get-VirtualizationFeaturesEnabled)
+}
+
+function Get-VirtualizationFeaturesEnabled {
     foreach ($feature in 'VirtualMachinePlatform', 'Microsoft-Windows-Subsystem-Linux', 'Microsoft-Hyper-V-All') {
         $f = Get-WindowsOptionalFeature -Online -FeatureName $feature -ErrorAction SilentlyContinue
         if ($f -and $f.State -eq 'Enabled') { return $true }
@@ -593,7 +601,6 @@ defaultPref("browser.newtabpage.activity-stream.feeds.section.topstories", false
 // Session: reopen the previous tabs
 defaultPref("browser.startup.page", 3);
 // AI features
-defaultPref("browser.ml.enable", false);
 defaultPref("browser.ml.chat.enabled", false);
 defaultPref("browser.ml.chat.shortcuts", false);
 defaultPref("browser.ml.linkPreview.enabled", false);
@@ -615,7 +622,6 @@ defaultPref("app.normandy.enabled", false);
 defaultPref("datareporting.usage.uploadEnabled", false);
 defaultPref("dom.private-attribution.submission.enabled", false);
 defaultPref("privacy.globalprivacycontrol.enabled", true);
-defaultPref("dom.security.https_only_mode", true);
 '@
     [IO.File]::WriteAllText((Join-Path $firefoxDir 'firefox.cfg'), $cfg, $utf8)
 
@@ -1356,6 +1362,7 @@ function Confirm-Hardware($Info) {
 }
 
 function Start-FirstRun($Info) {
+    if (Test-RebootPending) { Wait-Exit $RebootPendingMessage }
     $Info = Confirm-Hardware $Info
 
     $items = @(
@@ -1429,7 +1436,30 @@ function Start-FirstRun($Info) {
     Wait-Exit 'Restart the PC to apply all settings.'
 }
 
+# A module turned on since the last run (Docker enabling WSL, Xbox app reinstalled, notifications
+# switched on in Settings...) is not disabled silently: the user decides, and the choice is saved.
+function Resolve-ChoiceDrift($Choices) {
+    $checks = @(
+        @{ Key = 'Xbox'; Label = 'Xbox'; Test = { Get-XboxEnabled } },
+        @{ Key = 'Printing'; Label = 'Printing'; Test = { Get-PrintingEnabled } },
+        @{ Key = 'Virtualization'; Label = 'WSL / Virtualization'; Test = { Get-VirtualizationFeaturesEnabled } },
+        @{ Key = 'OneDrive'; Label = 'OneDrive'; Test = { Get-OneDriveInstalled } },
+        @{ Key = 'Notifications'; Label = 'Notifications'; Test = { Get-NotificationsEnabled } }
+    )
+    $changed = $false
+    foreach ($check in $checks) {
+        if ($Choices[$check.Key] -or -not (& $check.Test)) { continue }
+        $keep = Read-YesNo @(
+            ('{0} was turned on outside the script (by an app, an update or Windows settings).' -f $check.Label),
+            'Keep it on? No: it is disabled again.'
+        ) $true
+        if ($keep) { $Choices[$check.Key] = $true; $changed = $true }
+    }
+    if ($changed) { Save-Choices $Choices }
+}
+
 function Invoke-Reapply($Info, $Choices) {
+    Resolve-ChoiceDrift $Choices
     Write-Title
     Invoke-AllOptimizations $Info $Choices
     Write-Section 'Modules'
@@ -1499,6 +1529,9 @@ function Start-MainMenu($Info, $State) {
                     $choices.Xbox = -not $xbox; $choices.KeepGameBar = $keepGameBar; Save-Choices $choices
                 }
             }
+            { $_ -in 1, 2, 6 -and (Test-RebootPending) } {
+                Write-Title; Wait-Key $RebootPendingMessage; break
+            }
             1 {
                 if (Invoke-ModuleToggle 'Printing' $printing { Disable-Printing } { Enable-Printing } '') {
                     $choices.Printing = -not $printing; Save-Choices $choices
@@ -1538,6 +1571,9 @@ $state = Get-State
 if ($null -eq $state -or -not $state.InstallCompleted) {
     Start-FirstRun $systemInfo
 } else {
-    try { Update-InstalledCopy } catch { $null = $_ }
+    try {
+        Update-InstalledCopy
+        if (-not (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Desktop')) $ShortcutName))) { New-DesktopShortcut }
+    } catch { $null = $_ }
     Start-MainMenu $systemInfo $state
 }
