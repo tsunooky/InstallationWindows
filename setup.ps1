@@ -6,11 +6,12 @@
 .DESCRIPTION
     Installs the base applications, applies the privacy, performance and debloat
     settings of the InstallationWindows guide, manages the reversible modules
-    (Xbox, printing, WSL/virtualization, OneDrive) and runs a read-only health
-    check of the hardware configuration.
+    (Xbox, printing, WSL/virtualization, OneDrive, notifications) and runs a
+    read-only health check.
 
-    Usage: copy this file to the Desktop, right-click > "Run with PowerShell".
-    The script elevates itself. It is safe to run again at any time.
+    Usage: from the USB key, right-click > "Run with PowerShell". The script elevates
+    itself, copies itself to C:\ProgramData\OptimisationWindows and creates the
+    "Optimisation Windows" shortcut on the Desktop to run it again later.
 
     This file is intentionally ASCII-only so it displays correctly whatever the
     encoding used to read it.
@@ -24,6 +25,8 @@ $MinBuild      = 26100
 $DataDir       = Join-Path $env:ProgramData 'OptimisationWindows'
 $StatePath     = Join-Path $DataDir 'state.json'
 $TaskbarXml    = Join-Path $DataDir 'TaskbarLayout.xml'
+$InstalledCopy = Join-Path $DataDir 'setup.ps1'
+$ShortcutName  = 'Optimisation Windows.lnk'
 
 $SchemeBalanced        = '381b4222-f694-41f0-9685-ff5bb260df2e'
 $OverlayBestPerf       = 'ded574b5-45a0-4f42-8737-46345c09c238'
@@ -110,6 +113,8 @@ if (-not (Test-Admin) -or $PSVersionTable.PSEdition -eq 'Core') {
 }
 
 $Host.UI.RawUI.WindowTitle = 'Windows Optimization'
+# Progress bars (Appx, DISM, downloads) slow PowerShell 5.1 down and break the step display.
+$ProgressPreference = 'SilentlyContinue'
 
 # QuickEdit: a click in the window starts a selection that freezes all output until Enter is pressed.
 # Turn it off for this window only (the user's console defaults are not touched).
@@ -118,6 +123,7 @@ try {
 [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GetStdHandle(int nStdHandle);
 [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
 [DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 '@
     $stdIn = [OwNative.Console]::GetStdHandle(-10)
     $mode = [uint32]0
@@ -129,6 +135,15 @@ try {
 
 if ([Environment]::OSVersion.Version.Build -lt $MinBuild) {
     Wait-Exit ('Windows 11 24H2 or newer is required (build {0} detected, {1} minimum).' -f [Environment]::OSVersion.Version.Build, $MinBuild)
+}
+
+# Windows features cannot be changed reliably while an update waits for a restart.
+$rebootKeys = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending',
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+)
+if ($rebootKeys | Where-Object { Test-Path -LiteralPath $_ }) {
+    Wait-Exit 'A restart is pending (Windows Update). Restart the PC, then run the script again.'
 }
 
 if (-not (Test-Path -LiteralPath $DataDir)) { New-Item -Path $DataDir -ItemType Directory -Force | Out-Null }
@@ -205,7 +220,7 @@ function Remove-Shortcut([string[]]$Names) {
 
 # Removes Appx packages for all users and deprovisions them. Fails only if one is still
 # installed for the current user; packages Windows marks as non-removable are reported, not failed.
-function Remove-AppPackage([string[]]$Names) {
+function Uninstall-StoreApp([string[]]$Names) {
     $provisioned = @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue)
     $protected = @()
     $errors = @{}
@@ -229,6 +244,33 @@ function Remove-AppPackage([string[]]$Names) {
         throw ('still installed: ' + (($remaining | ForEach-Object { if ($errors[$_]) { '{0} ({1})' -f $_, $errors[$_] } else { $_ } }) -join '; '))
     }
     if ($protected.Count -gt 0) { return (Skip ('protected by Windows, kept: {0}' -f (($protected | Select-Object -Unique) -join ', '))) }
+}
+
+# Keeps a copy of the script in ProgramData, so the Desktop shortcut works without the USB key.
+# Running a newer setup.ps1 from anywhere refreshes the copy.
+function Update-InstalledCopy {
+    if ([string]::Equals($PSCommandPath, $InstalledCopy, [StringComparison]::OrdinalIgnoreCase)) { return }
+    Copy-Item -LiteralPath $PSCommandPath -Destination $InstalledCopy -Force
+}
+
+function New-DesktopShortcut {
+    $powershell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) $ShortcutName))
+    $link.TargetPath = $powershell
+    $link.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $InstalledCopy
+    $link.WorkingDirectory = $DataDir
+    $link.IconLocation = "$powershell,0"
+    $link.Description = 'Windows optimization: modules, health check, reapply'
+    $link.Save()
+}
+
+# Asks the Microsoft Store to update its apps (App Installer / winget included). Runs in the
+# background: the Store downloads the updates on its own, nothing to wait for.
+function Start-StoreUpdates {
+    $apps = Get-CimInstance -Namespace 'root\cimv2\mdm\dmmap' -ClassName 'MDM_EnterpriseModernAppManagement_AppManagement01' -ErrorAction SilentlyContinue
+    if (-not $apps) { return (Skip 'Store update service not available') }
+    $apps | Invoke-CimMethod -MethodName UpdateScanMethod | Out-Null
 }
 
 # ---------------------------------------------------------------------------
@@ -379,6 +421,26 @@ function Save-State($State) {
     $State | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $StatePath -Encoding UTF8
 }
 
+# The user's choices are the reference: Reapply enforces them even if Windows reinstalled
+# an app or re-enabled a service. The real state is only used for display.
+function Get-Choices($State) {
+    $choices = [ordered]@{
+        Xbox = $false; KeepGameBar = $false; Printing = $false; Virtualization = $false
+        OneDrive = $false; Notifications = $false; Steam = $false; Discord = $false
+    }
+    if ($State -and $State.Choices) {
+        foreach ($name in @($choices.Keys)) {
+            $value = $State.Choices.$name
+            if ($null -ne $value) { $choices[$name] = [bool]$value }
+        }
+    }
+    return $choices
+}
+
+function Save-Choices($Choices) {
+    Save-State ([ordered]@{ InstallCompleted = $true; Choices = $Choices })
+}
+
 # ---------------------------------------------------------------------------
 # Hardware and system detection
 # ---------------------------------------------------------------------------
@@ -397,6 +459,10 @@ function Test-DiscreteGpuName([string]$Name) {
 function Get-SystemInfo {
     $cpu = Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1
     $cs  = Get-CimInstance -ClassName Win32_ComputerSystem
+    # Mobile system type, or a portable chassis (laptop, notebook, 2-in-1, tablet).
+    # Win32_Battery is not used: a USB UPS shows up as a battery.
+    $chassis = @((Get-CimInstance -ClassName Win32_SystemEnclosure -ErrorAction SilentlyContinue).ChassisTypes)
+    $isLaptop = ($cs.PCSystemType -eq 2) -or [bool]($chassis | Where-Object { $_ -in 8, 9, 10, 14, 30, 31, 32 })
     $os  = Get-CimInstance -ClassName Win32_OperatingSystem
 
     $gpus = @(Get-CimInstance -ClassName Win32_VideoController | ForEach-Object {
@@ -429,8 +495,7 @@ function Get-SystemInfo {
         IsDualCcdX3D   = ($cpu.Name -match '7900X3D|7950X3D|9900X3D|9950X3D')
         Gpus           = $gpus
         HasDiscreteArc = [bool]($gpus | Where-Object { $_.Vendor -eq 'Intel' -and $_.IsDiscrete })
-        HasNvidia      = [bool]($gpus | Where-Object { $_.Vendor -eq 'NVIDIA' })
-        IsLaptop       = ($cs.PCSystemType -eq 2)  # Mobile; a USB UPS shows up as a battery, so Win32_Battery is not used
+        IsLaptop       = $isLaptop
         IsVM           = $isVm
         RamGB          = $ramGB
         HasLinux       = $hasLinux
@@ -525,6 +590,32 @@ defaultPref("datareporting.healthreport.uploadEnabled", false);
 defaultPref("app.shield.optoutstudies.enabled", false);
 defaultPref("browser.newtabpage.activity-stream.feeds.topsites", false);
 defaultPref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
+// Session: reopen the previous tabs
+defaultPref("browser.startup.page", 3);
+// AI features
+defaultPref("browser.ml.enable", false);
+defaultPref("browser.ml.chat.enabled", false);
+defaultPref("browser.ml.chat.shortcuts", false);
+defaultPref("browser.ml.linkPreview.enabled", false);
+defaultPref("browser.tabs.groups.smart.enabled", false);
+// Sponsored content
+defaultPref("browser.newtabpage.activity-stream.showSponsored", false);
+defaultPref("browser.newtabpage.activity-stream.showSponsoredTopSites", false);
+defaultPref("browser.urlbar.suggest.quicksuggest.sponsored", false);
+// Extension and feature recommendations, Firefox View
+defaultPref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons", false);
+defaultPref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features", false);
+defaultPref("extensions.htmlaboutaddons.recommendations.enabled", false);
+defaultPref("extensions.getAddons.showPane", false);
+defaultPref("browser.discovery.enabled", false);
+defaultPref("browser.tabs.firefox-view", false);
+// Privacy
+defaultPref("browser.crashReports.unsubmittedCheck.autoSubmit2", false);
+defaultPref("app.normandy.enabled", false);
+defaultPref("datareporting.usage.uploadEnabled", false);
+defaultPref("dom.private-attribution.submission.enabled", false);
+defaultPref("privacy.globalprivacycontrol.enabled", true);
+defaultPref("dom.security.https_only_mode", true);
 '@
     [IO.File]::WriteAllText((Join-Path $firefoxDir 'firefox.cfg'), $cfg, $utf8)
 
@@ -533,7 +624,6 @@ defaultPref("browser.newtabpage.activity-stream.feeds.section.topstories", false
     $xpi = Join-Path $extDir 'uBlock0@raymondhill.net.xpi'
     if (-not (Test-Path -LiteralPath $xpi)) {
         New-Item -Path $extDir -ItemType Directory -Force | Out-Null
-        $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri 'https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi' -OutFile $xpi -UseBasicParsing
     }
 
@@ -571,9 +661,19 @@ function Add-FirefoxToTaskbar {
     Set-RegValue $key 'StartLayoutFile' $TaskbarXml 'ExpandString'
     Set-RegValue $key 'LockedStartLayout' 1
     Get-Process -Name 'explorer' -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep -Seconds 6
+    # Windows restarts Explorer by itself; start it if it has not after a few seconds.
+    $deadline = (Get-Date).AddSeconds(6)
+    while ((Get-Date) -lt $deadline -and -not (Get-Process -Name 'explorer' -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
     if (-not (Get-Process -Name 'explorer' -ErrorAction SilentlyContinue)) { Start-Process 'explorer.exe' }
-    Start-Sleep -Seconds 4
+    # Wait for the taskbar window, then give Explorer time to read the layout before unlocking it.
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        $taskbar = [IntPtr]::Zero
+        try { $taskbar = [OwNative.Console]::FindWindow('Shell_TrayWnd', $null) } catch { $null = $_ }
+        if ($taskbar -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    Start-Sleep -Seconds 3
     Set-RegValue $key 'LockedStartLayout' 0
 }
 
@@ -591,6 +691,14 @@ function Invoke-AppSteps($Choices) {
         return
     }
 
+    Invoke-Step 'winget sources' {
+        # On a fresh install the sources are often out of date and installs fail until refreshed.
+        try { Invoke-Native -File 'winget' -Arguments @('source', 'update', '--disable-interactivity') | Out-Null }
+        catch {
+            Invoke-Native -File 'winget' -Arguments @('source', 'reset', '--force', '--disable-interactivity') | Out-Null
+            Invoke-Native -File 'winget' -Arguments @('source', 'update', '--disable-interactivity') | Out-Null
+        }
+    }
     Invoke-Step 'Firefox' { Install-WingetPackage 'Mozilla.Firefox.fr' }
     Invoke-Step 'Firefox: uBlock Origin and settings' { Set-FirefoxConfig }
     Invoke-Step 'Firefox: pin to the taskbar' { Add-FirefoxToTaskbar }
@@ -615,15 +723,23 @@ function Invoke-AppSteps($Choices) {
 # Optimizations (no rollback)
 # ---------------------------------------------------------------------------
 
-function Invoke-PrivacySteps($Info) {
+function Invoke-PrivacySteps {
     Write-Section 'Privacy and telemetry'
 
     Invoke-Step 'Telemetry and useless services' {
-        foreach ($name in $ServicesToDisable) { [void](Set-ServiceStartup -Name $name -Startup Disabled -Stop) }
+        $failed = @()
+        foreach ($name in $ServicesToDisable) {
+            try { [void](Set-ServiceStartup -Name $name -Startup Disabled -Stop) } catch { $failed += $name }
+        }
+        if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
     }
 
     Invoke-Step 'Telemetry scheduled tasks' {
-        foreach ($task in $TelemetryTasks) { Disable-TaskByPath $task }
+        $failed = @()
+        foreach ($task in $TelemetryTasks) {
+            try { Disable-TaskByPath $task } catch { $failed += (Split-Path -Path $task -Leaf) }
+        }
+        if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
     }
 
     Invoke-Step 'Windows Error Reporting' {
@@ -665,13 +781,6 @@ function Invoke-PrivacySteps($Info) {
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings' 'IsDeviceSearchHistoryEnabled' 0
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings' 'IsWebSuggestionsEnabled' 0
     }
-
-    if ($Info.HasNvidia) {
-        Invoke-Step 'NVIDIA telemetry' {
-            Set-RegValue 'HKLM:\SOFTWARE\NVIDIA Corporation\NvControlPanel2\Client' 'OptInOrOutPreference' 0
-            Get-ScheduledTask -TaskName 'NvTm*' -ErrorAction SilentlyContinue | Disable-ScheduledTask | Out-Null
-        }
-    }
 }
 
 function Invoke-AiSteps {
@@ -707,6 +816,7 @@ function Invoke-SystemSteps($Info, $Choices) {
         $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy'
         $allowed = @('Microsoft.SecHealthUI_8wekyb3d8bbwe')
         if ($Choices.Xbox) { $allowed += 'Microsoft.GamingApp_8wekyb3d8bbwe', 'Microsoft.XboxGamingOverlay_8wekyb3d8bbwe' }
+        elseif ($Choices.KeepGameBar) { $allowed += 'Microsoft.XboxGamingOverlay_8wekyb3d8bbwe' }
         Set-RegValue $key 'LetAppsRunInBackground' 2
         Set-RegValue $key 'LetAppsRunInBackground_ForceAllowTheseApps' ([string[]]$allowed) 'MultiString'
     }
@@ -721,7 +831,7 @@ function Invoke-SystemSteps($Info, $Choices) {
 
     Invoke-Step 'Mobile devices (Cross Device Experience Host)' {
         # Background process at every logon; Phone Link is already removed by the USB key.
-        Remove-AppPackage @('MicrosoftWindows.CrossDevice')
+        Uninstall-StoreApp @('MicrosoftWindows.CrossDevice')
     }
 
     Invoke-Step 'Cross-device resume and connected devices' {
@@ -758,14 +868,22 @@ function Invoke-PowerSteps($Info) {
         return
     }
 
-    Invoke-Step 'Balanced plan + "Best performance" power mode' {
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced) | Out-Null
-        try {
-            Invoke-Native -File 'powercfg.exe' -Arguments @('/overlaysetactive', $OverlayBestPerf) | Out-Null
-        } catch {
-            $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes'
-            Set-RegValue $key 'ActiveOverlayAcPowerScheme' $OverlayBestPerf 'String'
-            Set-RegValue $key 'ActiveOverlayDcPowerScheme' $OverlayBestPerf 'String'
+    if ($Info.IsDualCcdX3D) {
+        # The AMD driver parks the CCD without 3D V-Cache during games: keep the plain Balanced
+        # plan, without the "Best performance" mode whose effect on core parking is not documented.
+        Invoke-Step 'Balanced plan (dual-CCD X3D: core parking kept)' {
+            Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced) | Out-Null
+        }
+    } else {
+        Invoke-Step 'Balanced plan + "Best performance" power mode' {
+            Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced) | Out-Null
+            try {
+                Invoke-Native -File 'powercfg.exe' -Arguments @('/overlaysetactive', $OverlayBestPerf) | Out-Null
+            } catch {
+                $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes'
+                Set-RegValue $key 'ActiveOverlayAcPowerScheme' $OverlayBestPerf 'String'
+                Set-RegValue $key 'ActiveOverlayDcPowerScheme' $OverlayBestPerf 'String'
+            }
         }
     }
 
@@ -837,13 +955,17 @@ function Invoke-SearchSteps {
     Write-Section 'Search'
 
     Invoke-Step 'Document indexing: names and properties only' {
+        $failed = @()
         foreach ($ext in $PropertiesOnlyExtensions) {
-            $key = "HKLM:\SOFTWARE\Classes\$ext\PersistentHandler"
-            $current = Get-RegValue $key '(default)'
-            if ($current -eq $NullPersistentHandler) { continue }
-            if ($current) { Set-RegValue $key 'OriginalPersistentHandler' $current 'String' }
-            Set-RegValue $key '(default)' $NullPersistentHandler 'String'
+            try {
+                $key = "HKLM:\SOFTWARE\Classes\$ext\PersistentHandler"
+                $current = Get-RegValue $key '(default)'
+                if ($current -eq $NullPersistentHandler) { continue }
+                if ($current) { Set-RegValue $key 'OriginalPersistentHandler' $current 'String' }
+                Set-RegValue $key '(default)' $NullPersistentHandler 'String'
+            } catch { $failed += $ext }
         }
+        if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
     }
 }
 
@@ -897,27 +1019,26 @@ function Invoke-InterfaceSteps {
     }
 }
 
-function Invoke-NotificationSteps {
-    Write-Section 'Notifications'
+function Get-NotificationsEnabled {
+    return ((Get-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' 'ToastEnabled') -ne 0)
+}
 
-    Invoke-Step 'Notifications off' {
-        # Same as Settings > System > Notifications > Notifications: Off (can be turned back on there).
-        Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' 'ToastEnabled' 0
+function Set-Notifications([bool]$Enabled) {
+    $label = if ($Enabled) { 'Notifications on' } else { 'Notifications off' }
+    Invoke-Step $label {
+        # Same switch as Settings > System > Notifications.
+        Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' 'ToastEnabled' ([int]$Enabled)
+    }
+}
+
+function Invoke-NotificationSteps($Choices) {
+    Write-Section 'Notifications'
+    Set-Notifications ([bool]$Choices.Notifications)
+    Invoke-Step 'Lock screen notifications, tips and welcome screens' {
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings' 'NOC_GLOBAL_SETTING_ALLOW_TOASTS_ABOVE_LOCK' 0
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement' 'ScoobeSystemSettingEnabled' 0
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager' 'SubscribedContent-338389Enabled' 0
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowSyncProviderNotifications' 0
-    }
-}
-
-function Invoke-CleanupSteps {
-    Write-Section 'Cleanup'
-
-    Invoke-Step 'Temporary files' {
-        foreach ($dir in @($env:TEMP, "$env:SystemRoot\Temp")) {
-            Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue |
-                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-        }
     }
 }
 
@@ -928,7 +1049,7 @@ function Invoke-CleanupSteps {
 function Disable-Xbox([bool]$KeepGameBar = $false) {
     Invoke-Step 'Remove Xbox apps' {
         $targets = @($XboxPackages | Where-Object { -not ($KeepGameBar -and $_ -eq 'Microsoft.XboxGamingOverlay') })
-        Remove-AppPackage $targets
+        Uninstall-StoreApp $targets
     }
     if (-not $KeepGameBar) {
         Invoke-Step 'Xbox controller button: no Game Bar' {
@@ -1141,15 +1262,15 @@ function Show-HealthCheck($Info) {
         $modules = @(Get-CimInstance -ClassName Win32_PhysicalMemory)
         if ($modules.Count -gt 0) {
             $speed = [int]($modules | Measure-Object -Property ConfiguredClockSpeed -Maximum).Maximum
-            $type = [int]$modules[0].SMBIOSMemoryType
             $parts = @($modules | ForEach-Object { ([string]$_.PartNumber).Trim() } | Where-Object { $_ } | Select-Object -Unique)
             $label = 'RAM at {0} MT/s' -f $speed
             if ($parts.Count -gt 0) { $label += ' (kit: {0})' -f ($parts -join ', ') }
-            $baseSpeeds = switch ($type) { 34 { @(4800, 5200, 5600) } 26 { @(2133, 2400, 2666, 2933, 3200) } default { @() } }
-            if ($baseSpeeds -contains $speed) {
-                Write-Check 'info' $label 'Base speed: if the kit is rated faster, enable EXPO (AMD) or XMP (Intel) in the BIOS'
+            # Speed is the module's JEDEC (base) speed: running above it means EXPO / XMP is active.
+            $jedec = [int]($modules | Measure-Object -Property Speed -Minimum).Minimum
+            if ($jedec -gt 0 -and $speed -gt $jedec) {
+                Write-Check 'ok' ($label + ', EXPO/XMP active')
             } else {
-                Write-Check 'ok' $label
+                Write-Check 'info' ($label + ', no EXPO/XMP profile detected') 'If the kit is rated faster, enable EXPO (AMD) or XMP (Intel) in the BIOS'
             }
         }
 
@@ -1193,7 +1314,7 @@ function Show-HealthCheck($Info) {
 # ---------------------------------------------------------------------------
 
 function Invoke-AllOptimizations($Info, $Choices) {
-    Invoke-PrivacySteps $Info
+    Invoke-PrivacySteps
     Invoke-AiSteps
     Invoke-SystemSteps $Info $Choices
     Invoke-PowerSteps $Info
@@ -1227,14 +1348,10 @@ function Confirm-Hardware($Info) {
     )
     if (Read-YesNo $header $true) { return $Info }
 
-    $cpuIndex = Read-Menu -Header 'CPU brand?' -Items @(@{ Label = 'AMD' }, @{ Label = 'Intel' })
-    $Info.CpuVendor = @('AMD', 'Intel')[$cpuIndex]
-    if ($Info.CpuVendor -eq 'AMD') {
-        $Info.IsDualCcdX3D = Read-YesNo 'Is it a dual-CCD X3D (7900X3D, 7950X3D, 9900X3D, 9950X3D)?' $false
-    } else {
-        $Info.IsDualCcdX3D = $false
-    }
     $Info.IsLaptop = ((Read-Menu -Header 'Type of PC?' -Items @(@{ Label = 'Desktop' }, @{ Label = 'Laptop' })) -eq 1)
+    if ($Info.CpuVendor -eq 'AMD') {
+        $Info.IsDualCcdX3D = Read-YesNo 'Is it a dual-CCD X3D (7900X3D, 7950X3D, 9900X3D, 9950X3D)?' $Info.IsDualCcdX3D
+    }
     return $Info
 }
 
@@ -1248,6 +1365,8 @@ function Start-FirstRun($Info) {
            Hint = 'Unchecked: print spooler and virtual printers disabled (reversible).' },
         @{ Label = 'WSL / Virtualization'; Value = $false
            Hint = 'Unchecked: Docker Desktop, WSL2 and Android emulators will not work (reversible).' },
+        @{ Label = 'Notifications'; Value = $false
+           Hint = 'Unchecked: no notifications at all (Discord, Steam, Windows Update, Windows Security). Reversible.' },
         @{ Label = 'Install Steam'; Value = $false
            Hint = 'Installed with winget, not launched at startup.' },
         @{ Label = 'Install Discord'; Value = $false
@@ -1255,14 +1374,13 @@ function Start-FirstRun($Info) {
     )
     $items = Read-Checkboxes -Header 'Check what you use' -Items $items
 
-    $choices = [ordered]@{
-        Xbox           = [bool]$items[0].Value
-        KeepGameBar    = $false
-        Printing       = [bool]$items[1].Value
-        Virtualization = [bool]$items[2].Value
-        Steam          = [bool]$items[3].Value
-        Discord        = [bool]$items[4].Value
-    }
+    $choices = Get-Choices $null
+    $choices.Xbox           = [bool]$items[0].Value
+    $choices.Printing       = [bool]$items[1].Value
+    $choices.Virtualization = [bool]$items[2].Value
+    $choices.Notifications  = [bool]$items[3].Value
+    $choices.Steam          = [bool]$items[4].Value
+    $choices.Discord        = [bool]$items[5].Value
 
     if (-not $choices.Xbox -and $Info.IsDualCcdX3D) {
         $choices.KeepGameBar = Read-YesNo @(
@@ -1281,6 +1399,7 @@ function Start-FirstRun($Info) {
         $xboxLine,
         ('Printing              ' + (& $label $choices.Printing)),
         ('WSL / Virtualization  ' + (& $label $choices.Virtualization)),
+        ('Notifications         ' + (& $label $choices.Notifications)),
         ('Steam                 ' + (& $installed $choices.Steam)),
         ('Discord               ' + (& $installed $choices.Discord)),
         '',
@@ -1289,34 +1408,38 @@ function Start-FirstRun($Info) {
     if (-not (Read-YesNo $summary $true)) { Wait-Exit 'Nothing was changed.' }
 
     Write-Title
+    Write-Section 'Script'
+    Invoke-Step 'Desktop shortcut "Optimisation Windows"' {
+        Update-InstalledCopy
+        New-DesktopShortcut
+    }
     Invoke-AppSteps $choices
     Invoke-AllOptimizations $Info $choices
     Invoke-ModuleChoices $choices
-    Invoke-NotificationSteps
-    Invoke-CleanupSteps
+    Invoke-NotificationSteps $choices
 
-    Save-State ([ordered]@{ InstallCompleted = $true; Choices = $choices })
+    # Last, so the Store does not update App Installer while winget is installing apps.
+    Write-Section 'Microsoft Store'
+    Invoke-Step 'Store app updates (in the background)' { Start-StoreUpdates }
+
+    Save-Choices $choices
 
     Show-HealthCheck $Info
     Write-Summary
     Wait-Exit 'Restart the PC to apply all settings.'
 }
 
-function Invoke-Reapply($Info, $State) {
-    $choices = [ordered]@{
-        Xbox           = Get-XboxEnabled
-        KeepGameBar    = [bool]$State.Choices.KeepGameBar
-        Printing       = Get-PrintingEnabled
-        Virtualization = Get-VirtualizationEnabled
-    }
+function Invoke-Reapply($Info, $Choices) {
     Write-Title
-    Invoke-AllOptimizations $Info $choices
+    Invoke-AllOptimizations $Info $Choices
     Write-Section 'Modules'
-    if (-not $choices.Xbox) { Disable-Xbox -KeepGameBar $choices.KeepGameBar }
+    if (-not $Choices.Xbox) { Disable-Xbox -KeepGameBar $Choices.KeepGameBar }
+    if (-not $Choices.Printing) { Disable-Printing }
+    if (-not $Choices.Virtualization) { Disable-Virtualization }
+    if (-not $Choices.OneDrive -and (Get-OneDriveInstalled)) { Disable-OneDrive }
     Write-Section 'Applications'
     Invoke-Step 'Firefox: uBlock Origin and settings' { Set-FirefoxConfig }
-    Invoke-NotificationSteps
-    Invoke-CleanupSteps
+    Invoke-NotificationSteps $Choices
     Write-Summary
     Wait-Key 'Restart the PC to apply all settings. Press any key to go back to the menu.'
 }
@@ -1327,14 +1450,16 @@ function Invoke-ModuleToggle([string]$Name, [bool]$Enabled, [scriptblock]$OnDisa
     $header = @("$Name module: currently $state.")
     if ($Warning -and $Enabled) { $header += $Warning }
     $header += "$action it?"
-    if (-not (Read-YesNo $header $true)) { return }
+    if (-not (Read-YesNo $header $true)) { return $false }
     Write-Title
     if ($Enabled) { & $OnDisable } else { & $OnEnable }
     Write-Summary
     Wait-Key 'Restart recommended. Press any key to go back to the menu.'
+    return $true
 }
 
 function Start-MainMenu($Info, $State) {
+    $choices = Get-Choices $State
     while ($true) {
         Write-Title
         Write-Host '  Reading system state...' -ForegroundColor DarkGray
@@ -1342,6 +1467,7 @@ function Start-MainMenu($Info, $State) {
         $printing = Get-PrintingEnabled
         $virtualization = Get-VirtualizationEnabled
         $oneDrive = Get-OneDriveInstalled
+        $notifications = Get-NotificationsEnabled
 
         $status = { param($on) if ($on) { 'enabled' } else { 'disabled' } }
         $color = { param($on) if ($on) { 'Green' } else { 'DarkGray' } }
@@ -1354,6 +1480,8 @@ function Start-MainMenu($Info, $State) {
                Hint = 'Needed for Docker Desktop, WSL2 and Android emulators.' },
             @{ Label = 'OneDrive'; Status = (& $status $oneDrive); StatusColor = (& $color $oneDrive)
                Hint = 'Microsoft file sync.' },
+            @{ Label = 'Notifications'; Status = (& $status $notifications); StatusColor = (& $color $notifications)
+               Hint = 'All notifications: Discord, Steam, Windows Update, Windows Security.' },
             @{ Label = 'Health check'; SpaceBefore = $true; Hint = 'Checks VBS, Secure Boot, RAM speed, integrated graphics, graphics driver and refresh rate (read only).' },
             @{ Label = 'Reapply optimizations'; Hint = 'Run it again after a major Windows update.' },
             @{ Label = 'Quit'; SpaceBefore = $true }
@@ -1367,14 +1495,33 @@ function Start-MainMenu($Info, $State) {
                 if ($xbox -and $Info.IsDualCcdX3D) {
                     $keepGameBar = Read-YesNo @('Your CPU uses the Game Bar to send games to the right CCD.', 'Keep the Game Bar?') $true
                 }
-                Invoke-ModuleToggle 'Xbox' $xbox { Disable-Xbox -KeepGameBar $keepGameBar } { Enable-Xbox } ''
+                if (Invoke-ModuleToggle 'Xbox' $xbox { Disable-Xbox -KeepGameBar $keepGameBar } { Enable-Xbox } '') {
+                    $choices.Xbox = -not $xbox; $choices.KeepGameBar = $keepGameBar; Save-Choices $choices
+                }
             }
-            1 { Invoke-ModuleToggle 'Printing' $printing { Disable-Printing } { Enable-Printing } '' }
-            2 { Invoke-ModuleToggle 'WSL / Virtualization' $virtualization { Disable-Virtualization } { Enable-Virtualization } 'Docker Desktop, WSL2 and Android emulators will stop working.' }
-            3 { Invoke-ModuleToggle 'OneDrive' $oneDrive { Disable-OneDrive } { Enable-OneDrive } '' }
-            4 { Write-Title; Show-HealthCheck $Info; Wait-Key }
-            5 { if (Read-YesNo 'Reapply all optimizations?' $true) { Invoke-Reapply $Info $State } }
-            6 { exit }
+            1 {
+                if (Invoke-ModuleToggle 'Printing' $printing { Disable-Printing } { Enable-Printing } '') {
+                    $choices.Printing = -not $printing; Save-Choices $choices
+                }
+            }
+            2 {
+                if (Invoke-ModuleToggle 'WSL / Virtualization' $virtualization { Disable-Virtualization } { Enable-Virtualization } 'Docker Desktop, WSL2 and Android emulators will stop working.') {
+                    $choices.Virtualization = -not $virtualization; Save-Choices $choices
+                }
+            }
+            3 {
+                if (Invoke-ModuleToggle 'OneDrive' $oneDrive { Disable-OneDrive } { Enable-OneDrive } '') {
+                    $choices.OneDrive = -not $oneDrive; Save-Choices $choices
+                }
+            }
+            4 {
+                if (Invoke-ModuleToggle 'Notifications' $notifications { Set-Notifications $false } { Set-Notifications $true } '') {
+                    $choices.Notifications = -not $notifications; Save-Choices $choices
+                }
+            }
+            5 { Write-Title; Show-HealthCheck $Info; Wait-Key }
+            6 { if (Read-YesNo 'Reapply all optimizations?' $true) { Invoke-Reapply $Info $choices } }
+            7 { exit }
         }
     }
 }
@@ -1391,5 +1538,6 @@ $state = Get-State
 if ($null -eq $state -or -not $state.InstallCompleted) {
     Start-FirstRun $systemInfo
 } else {
+    try { Update-InstalledCopy } catch { $null = $_ }
     Start-MainMenu $systemInfo $state
 }
