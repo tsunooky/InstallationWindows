@@ -47,9 +47,8 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 
 ## 4. Lancer le script
 
-1. Copier `setup.ps1` de la clé vers le Bureau.
-2. Clic droit sur le fichier > **Exécuter avec PowerShell**, puis accepter la demande d'autorisation.
-3. Vérifier le matériel détecté, puis cocher ce que vous utilisez avec <kbd>Espace</kbd> et valider avec <kbd>Entrée</kbd> :
+1. Ouvrir la clé USB, clic droit sur `setup.ps1` > **Exécuter avec PowerShell**, puis accepter la demande d'autorisation.
+2. Vérifier le matériel détecté, puis cocher ce que vous utilisez avec <kbd>Espace</kbd> et valider avec <kbd>Entrée</kbd> :
 
 ```
   Windows Optimization
@@ -59,21 +58,22 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
   > [ ] Xbox (Game Pass, Xbox app, Game Bar)
     [ ] Printing
     [ ] WSL / Virtualization
+    [ ] Notifications
     [ ] Install Steam
     [ ] Install Discord
 
   Up/Down: move   Space: check/uncheck   Enter: confirm
 ```
 
-4. Laisser le script travailler quelques minutes. Chaque étape s'affiche avec son résultat, et les échecs éventuels sont rappelés à la fin.
-5. Redémarrer le PC.
+3. Laisser le script travailler quelques minutes. Chaque étape s'affiche avec son résultat, et les échecs éventuels sont rappelés à la fin.
+4. Redémarrer le PC.
 
 <details>
 <summary>Ce que fait le script</summary>
 
 - **Applications** : Firefox avec uBlock Origin, VLC et 7-Zip. Steam et Discord si cochés, sans lancement au démarrage de Windows.
 - **Confidentialité** : télémétrie, publicité ciblée, rapport d'erreurs, Copilot, Recall et résultats web de la recherche coupés.
-- **Système** : services inutiles arrêtés, applications en arrière-plan coupées, hibernation désactivée, notifications coupées.
+- **Système** : services inutiles arrêtés, applications en arrière-plan coupées, hibernation désactivée, notifications coupées si la case n'est pas cochée.
 - **Latence** (PC fixe) : mode d'alimentation « Meilleures performances », économies d'énergie désactivées.
 - **Jeu** : optimisations pour les jeux en fenêtre activées, enregistrement en arrière-plan coupé.
 - **Edge** : conservé, mais plus aucun processus en arrière-plan.
@@ -81,10 +81,10 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 
 </details>
 
-Relancer `setup.ps1` de la même façon ouvre un menu : activer ou désactiver un module, faire un bilan de santé, ou réappliquer les optimisations.
+Le script crée le raccourci **Optimisation Windows** sur le Bureau. Un double-clic dessus ouvre un menu : activer ou désactiver Xbox, l'impression, la virtualisation, OneDrive et les notifications, faire un bilan de santé, ou réappliquer les optimisations après une grosse mise à jour de Windows.
 
-> [!IMPORTANT]
-> Gardez `setup.ps1` sur le Bureau ou dans un dossier : il sert à réactiver ou désactiver plus tard Xbox, l'impression, la virtualisation et OneDrive. S'il a été supprimé, il reste téléchargeable sur ce dépôt.
+> [!TIP]
+> Raccourci supprimé par erreur ? Relancez `setup.ps1` depuis la clé USB ou depuis ce dépôt : il recrée le raccourci.
 
 ## 5. Régler la carte graphique
 
@@ -124,7 +124,7 @@ Ce réglage donne des résultats différents selon le processeur et le jeu. Mesu
 
 ### Installer WSL2 (Linux dans Windows)
 
-1. Relancer `setup.ps1` et activer le module **WSL / Virtualization**, puis redémarrer.
+1. Ouvrir le raccourci **Optimisation Windows** du Bureau et activer le module **WSL / Virtualization**, puis redémarrer.
 2. Ouvrir **Terminal** et lancer `wsl --install`, puis redémarrer.
 3. Créer le nom d'utilisateur et le mot de passe Linux demandés.
 4. Dans le terminal Ubuntu, mettre à jour :
