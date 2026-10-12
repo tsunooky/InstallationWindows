@@ -10,7 +10,7 @@ Une installation de Windows 11 sans compte Microsoft ni applications inutiles, a
 1. Télécharger ce dépôt : bouton **Code** > **Download ZIP**, puis extraire le dossier.
 2. Télécharger l'outil Microsoft : [Créer un support d'installation de Windows 11](https://www.microsoft.com/fr-fr/software-download/windows11).
 3. Lancer l'outil et créer la clé USB (8 Go minimum, son contenu est effacé).
-4. Copier les fichiers `autounattend.xml` et `config.ps1` à la racine de la clé, sans les renommer.
+4. Copier les fichiers `autounattend.xml` et `setup.ps1` à la racine de la clé, sans les renommer.
 5. PC fixe avec plusieurs disques : débrancher tous les disques sauf celui qui recevra Windows.
 
 > [!TIP]
@@ -47,7 +47,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 
 ## 4. Lancer le script
 
-1. Copier `config.ps1` de la clé vers le Bureau.
+1. Copier `setup.ps1` de la clé vers le Bureau.
 2. Clic droit sur le fichier > **Exécuter avec PowerShell**, puis accepter la demande d'autorisation.
 3. Vérifier le matériel détecté, puis cocher ce que vous utilisez avec <kbd>Espace</kbd> et valider avec <kbd>Entrée</kbd> :
 
@@ -81,7 +81,10 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 
 </details>
 
-Relancer `config.ps1` de la même façon ouvre un menu : activer ou désactiver un module, faire un bilan de santé, ou réappliquer les optimisations.
+Relancer `setup.ps1` de la même façon ouvre un menu : activer ou désactiver un module, faire un bilan de santé, ou réappliquer les optimisations.
+
+> [!IMPORTANT]
+> Gardez `setup.ps1` sur le Bureau ou dans un dossier : il sert à réactiver ou désactiver plus tard Xbox, l'impression, la virtualisation et OneDrive. S'il a été supprimé, il reste téléchargeable sur ce dépôt.
 
 ## 5. Régler la carte graphique
 
@@ -92,7 +95,7 @@ Les bons réglages dépendent de vos jeux et de vos préférences. Ces vidéos e
 
 ## 6. Bonnes pratiques
 
-- Pas d'overclocking : l'undervolting apporte bien plus, en températures, en durée de vie des composants et même en performances.
+- Pas d'overclocking manuel (activer le profil EXPO/XMP de la RAM est OK) : l'undervolting apporte bien plus, en températures, en durée de vie des composants et même en performances.
 - Pas de logiciel de nettoyage ou d'optimisation (CCleaner et autres).
 - Pas d'antivirus en plus : Microsoft Defender suffit.
 - Garder Windows et les pilotes à jour.
@@ -121,7 +124,7 @@ Ce réglage donne des résultats différents selon le processeur et le jeu. Mesu
 
 ### Installer WSL2 (Linux dans Windows)
 
-1. Relancer `config.ps1` et activer le module **WSL / Virtualization**, puis redémarrer.
+1. Relancer `setup.ps1` et activer le module **WSL / Virtualization**, puis redémarrer.
 2. Ouvrir **Terminal** et lancer `wsl --install`, puis redémarrer.
 3. Créer le nom d'utilisateur et le mot de passe Linux demandés.
 4. Dans le terminal Ubuntu, mettre à jour :
