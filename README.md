@@ -22,12 +22,12 @@ Une installation de Windows 11 sans compte Microsoft ni applications inutiles, a
 1. Brancher la clé et démarrer dessus : menu de démarrage avec <kbd>F8</kbd>, <kbd>F11</kbd> ou <kbd>F12</kbd> selon la marque, ou ordre de démarrage dans le BIOS.
 2. Si l'installation demande une édition, choisir celle de votre licence (Famille ou Pro).
 3. Supprimer TOUTES les partitions du disque qui recevra Windows, sélectionner l'espace non alloué, puis **Suivant**. Vérifiez qu'il s'agit du **bon** disque !
-4. Se connecter au Wi-Fi si besoin, puis créer le compte local (nom et mot de passe).
+4. Lancer l'installation, se connecter au Wi-Fi si possible, puis créer le compte local (nom et mot de passe).
 
 Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, puis entrez votre clé.
 
 > [!TIP]
-> Carte réseau non reconnue : branchez votre téléphone en USB et activez le partage de connexion le temps d'installer les pilotes.
+> Carte réseau non reconnue : branchez votre téléphone en USB et activez le partage de connexion par cable le temps d'installer les pilotes.
 
 ## 3. Mettre à jour Windows et installer les pilotes
 
@@ -40,8 +40,8 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 
 ## 4. Lancer le script
 
-1. Ouvrir la clé USB, double-cliquer sur `setup.cmd`, puis accepter la demande d'autorisation.
-2. Cocher ce que vous utilisez avec <kbd>Espace</kbd> ou <kbd>Entrée</kbd>, puis descendre sur **START** et appuyer sur <kbd>Entrée</kbd>. Ce qui n'est pas coché est retiré ou désactivé : Xbox est désinstallé, l'impression, WSL et les notifications sont coupés. Les applications (Firefox, VLC, Steam, Discord) sont proposées tant qu'elles ne sont pas installées, et ne sont jamais désinstallées. Sur **START**, le script résume ce qu'il va changer. <kbd>Échap</kbd> quitte sans rien faire.
+1. Ouvrez la clé USB et executez `setup.cmd`, puis acceptez la demande d'autorisation.
+2. Cochez ce que vous utilisez avec <kbd>Entrée</kbd>, puis descendre sur **START** et appuyer sur <kbd>Entrée</kbd>. Ce qui n'est pas coché est retiré ou désactivé pour optimiser les performances au coût de fonctionnalités. Toute action est **réversible** depuis la même interface !
 
 ```
 ╭─ Windows Optimization ─────────────────────────────────────────────────────╮
@@ -68,24 +68,20 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 ╰────────────────────────────────────────────────────────────────────────────╯
 ```
 
-Au premier lancement, rien n'est coché. Aux lancements suivants, les cases reprennent l'état du PC.
-
-3. Les sections se cochent au fur et à mesure. À la fin, le script affiche les étapes en échec, s'il y en a, et le bilan de santé du PC.
-4. Redémarrer le PC.
+3. Redémarrer le PC.
 
 <details>
 <summary>Ce que fait le script</summary>
 
-- **Applications** (au choix, tant qu'elles ne sont pas installées) : Firefox avec uBlock Origin, VLC, Steam et Discord. Steam et Discord ne se lancent pas au démarrage de Windows.
 - **Confidentialité** : télémétrie, publicité ciblée, rapport d'erreurs, Copilot, Recall et résultats web de la recherche coupés.
 - **Système** : services inutiles arrêtés, applications en arrière-plan coupées, hibernation désactivée.
 - **Latence** (PC fixe) : mode d'alimentation « Meilleures performances », économies d'énergie désactivées.
 - **Jeu** : optimisations pour les jeux en fenêtre activées, enregistrement en arrière-plan coupé.
-- **Au choix** : Xbox, impression, WSL / virtualisation et notifications restent actifs si leur ligne est cochée, et sont retirés ou désactivés sinon. Sur un processeur X3D à deux CCD (7950X3D, 9950X3D…), retirer Xbox garde la Game Bar, dont le processeur a besoin pour les jeux. Les applications retirées par la clé USB et réinstallées depuis par Windows (Outlook, Copilot, Teams…) apparaissent aussi dans la liste : décochées, elles sont supprimées.
+- **Au choix** : Xbox, impression, WSL / virtualisation et notifications restent actifs si leur ligne est cochée, et sont retirés ou désactivés sinon.
 
 </details>
 
-Le script n'installe rien sur le PC : gardez `setup.cmd` sur la clé USB, ou copiez-le où vous voulez, par exemple sur le Bureau. Le relancer refait les mêmes réglages sans toucher à ce qui est déjà en place : à faire après une grosse mise à jour de Windows, ou pour cocher ou décocher un élément de la liste.
+Vous pouvez garder ce script de côté si vous voulez inverser facilement certains paramètres depuis l'interface.
 
 ## 5. Régler la carte graphique
 
@@ -96,10 +92,10 @@ Les bons réglages dépendent de vos jeux et de vos préférences. Ces vidéos e
 
 ## 6. Bonnes pratiques
 
-- Pas d'overclocking manuel (activer le profil EXPO/XMP de la RAM est OK) : l'undervolting apporte bien plus, en températures, en durée de vie des composants et même en performances.
 - Pas de logiciel de nettoyage ou d'optimisation (CCleaner ou autre).
 - Pas d'antivirus : Microsoft Defender suffit.
 - Garder Windows et les pilotes à jour.
+- Pas d'overclocking manuel : l'undervolting apporte plus en températures, en durée de vie des composants et même en performances.
 
 ## 7. À tester soi-même
 
@@ -114,7 +110,7 @@ Ce réglage donne des résultats différents selon le processeur et le jeu. Mesu
 2. Clic droit sur le jeu > **Définir l'affinité**.
 3. Décocher les **deux** premiers processeurs (le cœur 0 et son deuxième thread).
 
-À refaire à chaque lancement du jeu. Certains anti-triches refusent ce changement : dans ce cas, laisser l'affinité par défaut.
+À refaire à chaque lancement du jeu, ou à automatiser avec Process Lasso.
 
 </details>
 
