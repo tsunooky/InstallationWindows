@@ -571,11 +571,6 @@ function Get-VirtualizationEnabled {
     return (Test-FeatureEnabled $VirtualizationDisable)
 }
 
-function Get-OneDriveInstalled {
-    return (Test-Path -LiteralPath "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDrive.exe") -or
-           (Test-Path -LiteralPath "$env:ProgramFiles\Microsoft OneDrive\OneDrive.exe")
-}
-
 function Test-SteamInstalled {
     $exe = Get-RegValue 'HKCU:\Software\Valve\Steam' 'SteamExe'
     return ($exe -and (Test-Path -LiteralPath $exe)) -or (Test-Path -LiteralPath "${env:ProgramFiles(x86)}\Steam\steam.exe")
@@ -768,12 +763,6 @@ function Invoke-AppSteps($Selected) {
         Remove-Shortcut @('VLC media player.lnk')
     }
     Invoke-Step '7-Zip' { Install-WingetPackage '7zip.7zip' }
-    # Removed by the USB key; a major Windows update or Microsoft 365 can install it again.
-    Invoke-Step 'Uninstall OneDrive' {
-        if (-not (Get-OneDriveInstalled)) { return (Skip 'not installed') }
-        Get-Process -Name 'OneDrive' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-        Uninstall-WingetPackage 'Microsoft.OneDrive'
-    }
 
     if ($Selected.Steam) {
         Invoke-Step 'Steam' { Install-WingetPackage 'Valve.Steam' }

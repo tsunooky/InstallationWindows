@@ -65,7 +65,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 <details>
 <summary>Ce que fait le script</summary>
 
-- **Applications** : Firefox avec uBlock Origin, VLC et 7-Zip. Steam et Discord si cochés, sans lancement au démarrage de Windows. OneDrive désinstallé s'il revient après une mise à jour de Windows.
+- **Applications** : Firefox avec uBlock Origin, VLC et 7-Zip. Steam et Discord si cochés, sans lancement au démarrage de Windows.
 - **Confidentialité** : télémétrie, publicité ciblée, rapport d'erreurs, Copilot, Recall et résultats web de la recherche coupés.
 - **Système** : services inutiles arrêtés, applications en arrière-plan coupées, hibernation désactivée.
 - **Latence** (PC fixe) : mode d'alimentation « Meilleures performances », économies d'énergie désactivées.
