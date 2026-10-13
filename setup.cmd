@@ -2,9 +2,17 @@
 @echo off
 rem setup.cmd is both a batch file and a PowerShell script: a double-click runs this part,
 rem which hands the whole file to Windows PowerShell 5.1 (no execution policy involved).
-setlocal
+setlocal EnableExtensions DisableDelayedExpansion
 set "OW_SELF=%~f0"
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command ". ([scriptblock]::Create((Get-Content -LiteralPath $env:OW_SELF -Raw)))"
+rem Set only by the elevated restart of the script, so it never restarts itself in a loop.
+set "OW_ELEVATED="
+if /i "%~1"=="/elevated" set "OW_ELEVATED=1"
+rem 64-bit PowerShell even when a 32-bit program starts this file (Sysnative only exists there).
+set "OW_PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if exist "%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe" set "OW_PS=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+"%OW_PS%" -NoProfile -Command ". ([scriptblock]::Create((Get-Content -LiteralPath $env:OW_SELF -Raw)))"
+rem The script always ends with exit 0: any other code is a crash, keep its message on screen.
+if errorlevel 1 pause
 exit /b
 #>
 
@@ -116,7 +124,7 @@ function Wait-Exit([string]$Message) {
     Write-Host ''
     Write-Host '  Press Enter to close.' -ForegroundColor DarkGray
     [void](Read-Host)
-    exit
+    exit 0
 }
 
 # Path of setup.cmd, given by its batch part.
@@ -127,12 +135,17 @@ if (-not $SelfPath -or -not (Test-Path -LiteralPath $SelfPath)) {
 
 # Appx and DISM cmdlets need administrator rights: start setup.cmd again, elevated.
 if (-not (Test-Admin)) {
+    # Already restarted elevated, still not an administrator (standard account without UAC).
+    if ($env:OW_ELEVATED) { Wait-Exit 'Administrator rights are required. Run the script from an administrator account.' }
     try {
-        Start-Process -FilePath $SelfPath -Verb RunAs | Out-Null
+        # Through cmd.exe rather than the "runas" verb of .cmd files: that verb runs cmd /C "%1",
+        # which drops the quotes of a path holding & ( ) @ ^, such as "InstallationWindows-main (1)".
+        $arguments = '/d /c ""{0}" /elevated"' -f $SelfPath
+        Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList $arguments -Verb RunAs | Out-Null
     } catch {
         Wait-Exit 'Administrator rights are required. Run the script again and accept the prompt.'
     }
-    exit
+    exit 0
 }
 
 $Host.UI.RawUI.WindowTitle = 'Windows Optimization'
@@ -278,17 +291,21 @@ function Test-FeatureEnabled([string[]]$Names) {
 # Features missing from this edition (Hyper-V and Sandbox on Home) are ignored.
 function Set-Features([string[]]$Names, [bool]$Enabled) {
     $states = Get-FeatureStates
+    $failed = @()
     foreach ($name in $Names) {
         if (-not $states.ContainsKey($name)) { continue }
         $on = $states[$name] -like 'Enable*'
-        if ($Enabled -and -not $on) {
-            Enable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart | Out-Null
-            $states[$name] = 'EnablePending'
-        } elseif (-not $Enabled -and $on) {
-            Disable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart | Out-Null
-            $states[$name] = 'DisablePending'
-        }
+        try {
+            if ($Enabled -and -not $on) {
+                Enable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart | Out-Null
+                $states[$name] = 'EnablePending'
+            } elseif (-not $Enabled -and $on) {
+                Disable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart | Out-Null
+                $states[$name] = 'DisablePending'
+            }
+        } catch { $failed += $name }
     }
+    if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
 }
 
 # Windows features cannot be changed reliably while an update waits for a restart.
@@ -314,6 +331,8 @@ function New-DesktopShortcut {
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) $ShortcutName))
     $link.TargetPath = $InstalledCopy
+    # An existing shortcut keeps its old arguments (powershell.exe -File ...setup.ps1) unless cleared.
+    $link.Arguments = ''
     $link.WorkingDirectory = $DataDir
     $link.IconLocation = "$powershell,0"
     $link.Description = 'Windows optimization'
@@ -468,7 +487,7 @@ function Get-GpuVendor([string]$PnpId) {
 }
 
 function Test-DiscreteGpuName([string]$Name) {
-    return ($Name -match 'GeForce|RTX|GTX|Quadro|Radeon RX|Radeon Pro|Radeon VII|Arc\(TM\) [AB]\d{3}|Arc [AB]\d{3}')
+    return ($Name -match 'GeForce|RTX|GTX|Quadro|Radeon RX|Radeon (AI )?Pro|Radeon VII|Arc(\(TM\))? (Pro )?[AB]\d{2,3}')
 }
 
 function Get-SystemInfo {
@@ -648,7 +667,10 @@ defaultPref("privacy.globalprivacycontrol.enabled", true);
     $xpi = Join-Path $extDir 'uBlock0@raymondhill.net.xpi'
     if (-not (Test-Path -LiteralPath $xpi)) {
         New-Item -Path $extDir -ItemType Directory -Force | Out-Null
-        Invoke-WebRequest -Uri 'https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi' -OutFile $xpi -UseBasicParsing
+        # Download elsewhere, then move: an interrupted download must not pass the "already done" check.
+        $download = Join-Path $env:TEMP 'uBlock0@raymondhill.net.xpi'
+        Invoke-WebRequest -Uri 'https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi' -OutFile $download -UseBasicParsing
+        Move-Item -LiteralPath $download -Destination $xpi -Force
     }
 
     # Daily task that reports the default browser to Mozilla.
@@ -944,16 +966,19 @@ function Invoke-PowerSteps($Info) {
         $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)
         if ($adapters.Count -eq 0) { return (Skip 'no adapter found') }
         $keywords = @('*EEE', 'EEE', 'AdvancedEEE', 'EnableGreenEthernet', 'GigaLite', 'PowerSavingMode', 'ULPMode')
+        $failed = @()
         foreach ($adapter in $adapters) {
             if ($adapter.NdisPhysicalMedium -eq 14) {
                 foreach ($keyword in $keywords) {
                     $prop = Get-NetAdapterAdvancedProperty -Name $adapter.Name -RegistryKeyword $keyword -ErrorAction SilentlyContinue
                     if ($prop -and "$($prop.RegistryValue)" -ne '0') {
-                        Set-NetAdapterAdvancedProperty -Name $adapter.Name -RegistryKeyword $keyword -RegistryValue '0' -NoRestart -ErrorAction SilentlyContinue
+                        try { Set-NetAdapterAdvancedProperty -Name $adapter.Name -RegistryKeyword $keyword -RegistryValue '0' -NoRestart }
+                        catch { $failed += ('{0} ({1})' -f $keyword, $adapter.Name) }
                     }
                 }
             }
         }
+        if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
     }
 }
 
@@ -1395,7 +1420,7 @@ function Confirm-Hardware($Info) {
     )
     if (Read-YesNo $header $true) { return $Info }
 
-    $Info.IsLaptop = ((Read-Menu -Header 'Type of PC?' -Items @(@{ Label = 'Desktop' }, @{ Label = 'Laptop' })) -eq 1)
+    $Info.IsLaptop = ((Read-Menu -Header 'Type of PC?' -Items @(@{ Label = 'Desktop' }, @{ Label = 'Laptop' }) -Default ([int]$Info.IsLaptop)) -eq 1)
     if ($Info.CpuVendor -eq 'AMD') {
         $Info.IsDualCcdX3D = Read-YesNo 'Is it an X3D with more than 8 cores (7900X3D, 9950X3D, 9955HX3D...)?' $Info.IsDualCcdX3D
     }
