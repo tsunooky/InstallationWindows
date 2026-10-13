@@ -487,7 +487,7 @@ function Get-GpuVendor([string]$PnpId) {
 }
 
 function Test-DiscreteGpuName([string]$Name) {
-    return ($Name -match 'GeForce|RTX|GTX|Quadro|Radeon RX|Radeon (AI )?Pro|Radeon VII|Arc(\(TM\))? (Pro )?[AB]\d{2,3}')
+    return ($Name -match 'GeForce|RTX|GTX|Quadro|Radeon RX|Radeon (AI )?Pro|Radeon VII')
 }
 
 function Get-SystemInfo {
@@ -524,18 +524,17 @@ function Get-SystemInfo {
     $hasLinux = [bool](Get-Partition -ErrorAction SilentlyContinue | Where-Object { $_.GptType -eq '{0FC63DAF-8483-4772-8E79-3D69D8477DE4}' })
 
     [pscustomobject]@{
-        CpuName        = $cpu.Name.Trim()
-        CpuVendor      = $cpuVendor
+        CpuName      = $cpu.Name.Trim()
+        CpuVendor    = $cpuVendor
         # Every X3D with more than 8 cores has two CCDs (7900X3D to 9950X3D, 7945HX3D, 9955HX3D).
-        IsDualCcdX3D   = ($cpu.Name -match 'X3D' -and $cpu.NumberOfCores -gt 8)
-        Gpus           = $gpus
-        HasDiscreteArc = [bool]($gpus | Where-Object { $_.Vendor -eq 'Intel' -and $_.IsDiscrete })
-        IsLaptop       = $isLaptop
-        IsVM           = $isVm
-        RamGB          = $ramGB
-        HasLinux       = $hasLinux
-        Edition        = $os.Caption
-        Build          = [Environment]::OSVersion.Version.Build
+        IsDualCcdX3D = ($cpu.Name -match 'X3D' -and $cpu.NumberOfCores -gt 8)
+        Gpus         = $gpus
+        IsLaptop     = $isLaptop
+        IsVM         = $isVm
+        RamGB        = $ramGB
+        HasLinux     = $hasLinux
+        Edition      = $os.Caption
+        Build        = [Environment]::OSVersion.Version.Build
     }
 }
 
@@ -942,7 +941,6 @@ function Invoke-PowerSteps($Info) {
     }
 
     Invoke-Step 'PCI Express link state power management' {
-        if ($Info.HasDiscreteArc) { return (Skip 'Intel Arc GPU, kept') }
         Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex', $SchemeBalanced, 'SUB_PCIEXPRESS', 'ASPM', '0') | Out-Null
         Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex', $SchemeBalanced, 'SUB_PCIEXPRESS', 'ASPM', '0') | Out-Null
     }
