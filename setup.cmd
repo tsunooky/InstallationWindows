@@ -291,21 +291,18 @@ function Test-FeatureEnabled([string[]]$Names) {
 # Features missing from this edition (Hyper-V and Sandbox on Home) are ignored.
 function Set-Features([string[]]$Names, [bool]$Enabled) {
     $states = Get-FeatureStates
-    $failed = @()
-    foreach ($name in $Names) {
-        if (-not $states.ContainsKey($name)) { continue }
-        $on = $states[$name] -like 'Enable*'
-        try {
-            if ($Enabled -and -not $on) {
-                Enable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart | Out-Null
-                $states[$name] = 'EnablePending'
-            } elseif (-not $Enabled -and $on) {
-                Disable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart | Out-Null
-                $states[$name] = 'DisablePending'
-            }
-        } catch { $failed += $name }
+    Invoke-ForEachItem $Names {
+        param($Feature)
+        if (-not $states.ContainsKey($Feature)) { return }
+        $on = $states[$Feature] -like 'Enable*'
+        if ($Enabled -and -not $on) {
+            Enable-WindowsOptionalFeature -Online -FeatureName $Feature -NoRestart
+            $states[$Feature] = 'EnablePending'
+        } elseif (-not $Enabled -and $on) {
+            Disable-WindowsOptionalFeature -Online -FeatureName $Feature -NoRestart
+            $states[$Feature] = 'DisablePending'
+        }
     }
-    if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
 }
 
 # Windows features cannot be changed reliably while an update waits for a restart.
@@ -454,17 +451,19 @@ function Read-Checkboxes {
 
 $script:Failures = New-Object System.Collections.Generic.List[string]
 
-function Skip([string]$Reason) { return "__SKIP__$Reason" }
+# Marks the running step as skipped, from the step itself or from any helper it calls.
+function Skip([string]$Reason) { $script:StepSkip = $Reason }
 
+# The output of a step is discarded: no Out-Null needed inside a step.
 function Invoke-Step {
     param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][scriptblock]$Action)
     Write-Host ("  ...  $Label") -ForegroundColor DarkGray -NoNewline
     $ErrorActionPreference = 'Stop'
+    $script:StepSkip = $null
     try {
-        $result = @(& $Action)
-        $skip = $result | Where-Object { $_ -is [string] -and $_.StartsWith('__SKIP__') } | Select-Object -First 1
-        if ($skip) {
-            Write-Host ("`r  --   $Label ({0})" -f $skip.Substring(8)) -ForegroundColor DarkGray
+        $null = & $Action
+        if ($script:StepSkip) {
+            Write-Host ("`r  --   $Label ({0})" -f $script:StepSkip) -ForegroundColor DarkGray
         } else {
             Write-Host ("`r  OK   $Label") -ForegroundColor Green
         }
@@ -473,6 +472,14 @@ function Invoke-Step {
         Write-Host ("       {0}" -f $_.Exception.Message) -ForegroundColor DarkRed
         $script:Failures.Add($Label)
     }
+}
+
+# Runs Action on every item without stopping at the first failure, then fails once, naming the
+# items that failed (with Label, or the item itself).
+function Invoke-ForEachItem {
+    param([object[]]$Items, [scriptblock]$Action, [scriptblock]$Label = { param($Item) "$Item" })
+    $failed = @(foreach ($item in $Items) { try { $null = & $Action $item } catch { & $Label $item } })
+    if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
 }
 
 # ---------------------------------------------------------------------------
@@ -587,10 +594,13 @@ function Get-ReturningApps {
 # winget
 # ---------------------------------------------------------------------------
 
-function Initialize-Winget {
-    if (Get-Command -Name 'winget' -ErrorAction SilentlyContinue) { return $true }
+# On a fresh install, winget may only work once App Installer is registered for the user.
+function Assert-Winget {
+    if (Get-Command -Name 'winget' -ErrorAction SilentlyContinue) { return }
     Add-AppxPackage -RegisterByFamilyName -MainPackage 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe' -ErrorAction SilentlyContinue
-    return [bool](Get-Command -Name 'winget' -ErrorAction SilentlyContinue)
+    if (-not (Get-Command -Name 'winget' -ErrorAction SilentlyContinue)) {
+        throw 'winget not found: update "App Installer" from the Microsoft Store, then run the script again.'
+    }
 }
 
 # One winget call per package: "install" already detects an installed package.
@@ -599,6 +609,7 @@ $WingetNoUpdate         = -1978335189  # 0x8A15002B
 $WingetNotFound         = -1978335212  # 0x8A150014
 
 function Install-WingetPackage([string]$Id, [string]$Source = 'winget') {
+    Assert-Winget
     $arguments = @('install', '--id', $Id, '--exact', '--source', $Source, '--silent', '--no-upgrade',
                    '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
     Invoke-Native -File 'winget' -Arguments $arguments -OkCodes @(0, $WingetAlreadyInstalled, $WingetNoUpdate) | Out-Null
@@ -606,6 +617,7 @@ function Install-WingetPackage([string]$Id, [string]$Source = 'winget') {
 }
 
 function Uninstall-WingetPackage([string]$Id) {
+    Assert-Winget
     Invoke-Native -File 'winget' -Arguments @('uninstall', '--id', $Id, '--exact', '--silent', '--accept-source-agreements', '--disable-interactivity') -OkCodes @(0, $WingetNotFound) | Out-Null
     if ($LASTEXITCODE -ne 0) { return (Skip 'not installed') }
 }
@@ -731,32 +743,29 @@ function Disable-StartupEntry([string]$Name) {
 function Invoke-AppSteps($Selected) {
     Write-Section 'Applications'
 
-    if (-not (Initialize-Winget)) {
-        Invoke-Step 'winget' { throw 'winget not found: update "App Installer" from the Microsoft Store, then run the script again.' }
-        return
-    }
-
     Invoke-Step 'winget sources' {
+        Assert-Winget
         # On a fresh install the sources are often out of date and installs fail until refreshed.
-        try { Invoke-Native -File 'winget' -Arguments @('source', 'update', '--disable-interactivity') | Out-Null }
+        try { Invoke-Native -File 'winget' -Arguments @('source', 'update', '--disable-interactivity') }
         catch {
-            Invoke-Native -File 'winget' -Arguments @('source', 'reset', '--force', '--disable-interactivity') | Out-Null
-            Invoke-Native -File 'winget' -Arguments @('source', 'update', '--disable-interactivity') | Out-Null
+            Invoke-Native -File 'winget' -Arguments @('source', 'reset', '--force', '--disable-interactivity')
+            Invoke-Native -File 'winget' -Arguments @('source', 'update', '--disable-interactivity')
         }
     }
+    # Without winget, every install below would only repeat the failure above.
+    if (-not (Get-Command -Name 'winget' -ErrorAction SilentlyContinue)) { return }
+
     $script:FirefoxInstalledNow = $false
     Invoke-Step 'Firefox' {
-        $result = Install-WingetPackage 'Mozilla.Firefox.fr'
-        if (-not $result) { $script:FirefoxInstalledNow = $true }
-        $result
+        Install-WingetPackage 'Mozilla.Firefox.fr'
+        $script:FirefoxInstalledNow = -not $script:StepSkip
     }
     Invoke-Step 'Firefox: uBlock Origin and settings' { Set-FirefoxConfig }
     # Only right after the install: the user may have changed the pins since.
     if ($script:FirefoxInstalledNow) { Invoke-Step 'Firefox: pin to the taskbar' { Add-FirefoxToTaskbar } }
     Invoke-Step 'VLC' {
-        $result = Install-WingetPackage 'VideoLAN.VLC'
+        Install-WingetPackage 'VideoLAN.VLC'
         Remove-Shortcut @('VLC media player.lnk')
-        $result
     }
     Invoke-Step '7-Zip' { Install-WingetPackage '7zip.7zip' }
 
@@ -778,19 +787,11 @@ function Invoke-PrivacySteps {
     Write-Section 'Privacy and telemetry'
 
     Invoke-Step 'Telemetry and useless services' {
-        $failed = @()
-        foreach ($name in $ServicesToDisable) {
-            try { [void](Set-ServiceStartup -Name $name -Startup Disabled -Stop) } catch { $failed += $name }
-        }
-        if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
+        Invoke-ForEachItem $ServicesToDisable { param($Service) Set-ServiceStartup -Name $Service -Startup Disabled -Stop }
     }
 
     Invoke-Step 'Telemetry scheduled tasks' {
-        $failed = @()
-        foreach ($task in $TelemetryTasks) {
-            try { Disable-TaskByPath $task } catch { $failed += (Split-Path -Path $task -Leaf) }
-        }
-        if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
+        Invoke-ForEachItem $TelemetryTasks { param($Task) Disable-TaskByPath $Task } -Label { param($Task) Split-Path -Path $Task -Leaf }
     }
 
     Invoke-Step 'Windows Error Reporting' {
@@ -860,7 +861,7 @@ function Invoke-SystemSteps($Info) {
 
     Invoke-Step 'Hibernation' {
         if ($Info.IsLaptop) { return (Skip 'laptop, Windows uses it to protect the battery in standby') }
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/hibernate', 'off') | Out-Null
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/hibernate', 'off')
     }
 
     Invoke-Step 'Background apps' {
@@ -925,13 +926,13 @@ function Invoke-PowerSteps($Info) {
         # The AMD driver parks the CCD without 3D V-Cache during games: keep the plain Balanced
         # plan, without the "Best performance" mode whose effect on core parking is not documented.
         Invoke-Step 'Balanced plan (dual-CCD X3D: core parking kept)' {
-            Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced) | Out-Null
+            Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced)
         }
     } else {
         Invoke-Step 'Balanced plan + "Best performance" power mode' {
-            Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced) | Out-Null
+            Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced)
             try {
-                Invoke-Native -File 'powercfg.exe' -Arguments @('/overlaysetactive', $OverlayBestPerf) | Out-Null
+                Invoke-Native -File 'powercfg.exe' -Arguments @('/overlaysetactive', $OverlayBestPerf)
             } catch {
                 $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes'
                 Set-RegValue $key 'ActiveOverlayAcPowerScheme' $OverlayBestPerf 'String'
@@ -941,42 +942,38 @@ function Invoke-PowerSteps($Info) {
     }
 
     Invoke-Step 'PCI Express link state power management' {
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex', $SchemeBalanced, 'SUB_PCIEXPRESS', 'ASPM', '0') | Out-Null
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex', $SchemeBalanced, 'SUB_PCIEXPRESS', 'ASPM', '0') | Out-Null
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex', $SchemeBalanced, 'SUB_PCIEXPRESS', 'ASPM', '0')
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex', $SchemeBalanced, 'SUB_PCIEXPRESS', 'ASPM', '0')
     }
 
     Invoke-Step 'USB selective suspend' {
         $sub = '2a737441-1930-4402-8d77-b2bebba308a3'; $setting = '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex', $SchemeBalanced, $sub, $setting, '0') | Out-Null
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex', $SchemeBalanced, $sub, $setting, '0') | Out-Null
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex', $SchemeBalanced, $sub, $setting, '0')
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex', $SchemeBalanced, $sub, $setting, '0')
     }
 
     Invoke-Step 'Wi-Fi power saving' {
         $sub = '19cbb8fa-5279-450e-9fac-8a3d5fedd0c1'; $setting = '12bbebe6-58d6-4636-95bb-3217ef867c1a'
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex', $SchemeBalanced, $sub, $setting, '0') | Out-Null
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex', $SchemeBalanced, $sub, $setting, '0')
     }
 
     Invoke-Step 'Apply the modified power plan' {
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced) | Out-Null
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced)
     }
 
     Invoke-Step 'Network adapter power saving' {
-        $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)
-        if ($adapters.Count -eq 0) { return (Skip 'no adapter found') }
+        $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.NdisPhysicalMedium -eq 14 })
+        if ($adapters.Count -eq 0) { return (Skip 'no Ethernet adapter') }
         $keywords = @('*EEE', 'EEE', 'AdvancedEEE', 'EnableGreenEthernet', 'GigaLite', 'PowerSavingMode', 'ULPMode')
-        $failed = @()
-        foreach ($adapter in $adapters) {
-            if ($adapter.NdisPhysicalMedium -eq 14) {
-                foreach ($keyword in $keywords) {
-                    $prop = Get-NetAdapterAdvancedProperty -Name $adapter.Name -RegistryKeyword $keyword -ErrorAction SilentlyContinue
-                    if ($prop -and "$($prop.RegistryValue)" -ne '0') {
-                        try { Set-NetAdapterAdvancedProperty -Name $adapter.Name -RegistryKeyword $keyword -RegistryValue '0' -NoRestart }
-                        catch { $failed += ('{0} ({1})' -f $keyword, $adapter.Name) }
-                    }
-                }
+        $properties = @(foreach ($adapter in $adapters) {
+            foreach ($keyword in $keywords) {
+                Get-NetAdapterAdvancedProperty -Name $adapter.Name -RegistryKeyword $keyword -ErrorAction SilentlyContinue |
+                    Where-Object { "$($_.RegistryValue)" -ne '0' }
             }
+        })
+        Invoke-ForEachItem $properties { param($Property) $Property | Set-NetAdapterAdvancedProperty -RegistryValue '0' -NoRestart } -Label {
+            param($Property) '{0} ({1})' -f $Property.RegistryKeyword, $Property.Name
         }
-        if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
     }
 }
 
@@ -1010,17 +1007,14 @@ function Invoke-SearchSteps {
     Write-Section 'Search'
 
     Invoke-Step 'Document indexing: names and properties only' {
-        $failed = @()
-        foreach ($ext in $PropertiesOnlyExtensions) {
-            try {
-                $key = "HKLM:\SOFTWARE\Classes\$ext\PersistentHandler"
-                $current = Get-RegValue $key '(default)'
-                if ($current -eq $NullPersistentHandler) { continue }
-                if ($current) { Set-RegValue $key 'OriginalPersistentHandler' $current 'String' }
-                Set-RegValue $key '(default)' $NullPersistentHandler 'String'
-            } catch { $failed += $ext }
+        Invoke-ForEachItem $PropertiesOnlyExtensions {
+            param($Extension)
+            $key = "HKLM:\SOFTWARE\Classes\$Extension\PersistentHandler"
+            $current = Get-RegValue $key '(default)'
+            if ($current -eq $NullPersistentHandler) { return }
+            if ($current) { Set-RegValue $key 'OriginalPersistentHandler' $current 'String' }
+            Set-RegValue $key '(default)' $NullPersistentHandler 'String'
         }
-        if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
     }
 }
 
@@ -1113,7 +1107,6 @@ function Disable-Xbox([bool]$KeepGameBar = $false) {
 }
 
 function Enable-Xbox {
-    if (-not (Initialize-Winget)) { Invoke-Step 'winget' { throw 'winget not found.' }; return }
     foreach ($entry in $XboxStoreIds.GetEnumerator()) {
         $id = $entry.Value
         Invoke-Step ('Install {0}' -f $entry.Key) { Install-WingetPackage -Id $id -Source 'msstore' }
@@ -1124,19 +1117,19 @@ function Enable-Xbox {
 }
 
 function Disable-Printing {
-    Invoke-Step 'Print Spooler' { [void](Set-ServiceStartup -Name 'Spooler' -Startup Disabled -Stop) }
+    Invoke-Step 'Print Spooler' { Set-ServiceStartup -Name 'Spooler' -Startup Disabled -Stop }
     Invoke-Step 'PDF and XPS virtual printers' { Set-Features $PrintingFeatures $false }
 }
 
 function Enable-Printing {
-    Invoke-Step 'Print Spooler' { [void](Set-ServiceStartup -Name 'Spooler' -Startup Automatic -Start) }
+    Invoke-Step 'Print Spooler' { Set-ServiceStartup -Name 'Spooler' -Startup Automatic -Start }
     Invoke-Step 'PDF and XPS virtual printers' { Set-Features $PrintingFeatures $true }
 }
 
 function Disable-Virtualization {
     Invoke-Step 'WSL, virtualization platforms, Hyper-V and Sandbox' { Set-Features $VirtualizationDisable $false }
     Invoke-Step 'Hypervisor at boot' {
-        Invoke-Native -File 'bcdedit.exe' -Arguments @('/set', 'hypervisorlaunchtype', 'off') | Out-Null
+        Invoke-Native -File 'bcdedit.exe' -Arguments @('/set', 'hypervisorlaunchtype', 'off')
     }
 }
 
@@ -1144,17 +1137,15 @@ function Enable-Virtualization {
     # Hyper-V and Sandbox (Pro editions) are not turned back on: Windows features, if needed.
     Invoke-Step 'WSL and virtualization platforms' { Set-Features $VirtualizationEnable $true }
     Invoke-Step 'Hypervisor at boot' {
-        Invoke-Native -File 'bcdedit.exe' -Arguments @('/set', 'hypervisorlaunchtype', 'auto') | Out-Null
+        Invoke-Native -File 'bcdedit.exe' -Arguments @('/set', 'hypervisorlaunchtype', 'auto')
     }
 }
 
 function Enable-OneDrive {
-    if (-not (Initialize-Winget)) { Invoke-Step 'winget' { throw 'winget not found.' }; return }
     Invoke-Step 'Install OneDrive' { Install-WingetPackage 'Microsoft.OneDrive' }
 }
 
 function Disable-OneDrive {
-    if (-not (Initialize-Winget)) { Invoke-Step 'winget' { throw 'winget not found.' }; return }
     Invoke-Step 'Uninstall OneDrive' {
         Get-Process -Name 'OneDrive' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Uninstall-WingetPackage 'Microsoft.OneDrive'
