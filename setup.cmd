@@ -359,25 +359,6 @@ function Test-RebootPending {
     return [bool]($keys | Where-Object { Test-Path -LiteralPath $_ })
 }
 
-# Earlier versions copied the script to ProgramData, with a Desktop shortcut to the copy. Their
-# taskbar layout file stays in that folder: the taskbar policy of the user still points to it.
-function Remove-OldVersionFiles {
-    $folder = Join-Path $env:ProgramData 'OptimisationWindows'
-    $paths = @(Join-Path ([Environment]::GetFolderPath('Desktop')) 'Optimisation Windows.lnk') +
-             @('setup.cmd', 'setup.ps1', 'state.json' | ForEach-Object { Join-Path $folder $_ })
-    $paths = @($paths | Where-Object {
-        (Test-Path -LiteralPath $_) -and -not [string]::Equals($_, $SelfPath, [StringComparison]::OrdinalIgnoreCase)
-    })
-    if ($paths.Count -eq 0) { return }
-    Start-Section 'Script'
-    Invoke-Step 'Remove the copy and the shortcut of earlier versions' {
-        Invoke-ForEachItem $paths { param($Path) Remove-Item -LiteralPath $Path -Force }
-        if (-not (Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)) {
-            Remove-Item -LiteralPath $folder -Force -ErrorAction SilentlyContinue
-        }
-    }
-}
-
 # Asks the Microsoft Store to update its apps (App Installer / winget included). Runs in the
 # background: the Store downloads the updates on its own, nothing to wait for.
 function Start-StoreUpdates {
@@ -1417,11 +1398,14 @@ function Enable-Xbox {
 
 function Disable-Printing {
     Invoke-Step 'Print Spooler' { Set-ServiceStartup -Name 'Spooler' -Startup Disabled -Stop }
+    # Configures IPP printers; keeps running once started even with the spooler disabled.
+    Invoke-Step 'Printer configuration service' { Set-ServiceStartup -Name 'PrintDeviceConfigurationService' -Startup Disabled -Stop }
     Invoke-Step 'PDF and XPS virtual printers' { Set-Features $PrintingFeatures $false }
 }
 
 function Enable-Printing {
     Invoke-Step 'Print Spooler' { Set-ServiceStartup -Name 'Spooler' -Startup Automatic -Start }
+    Invoke-Step 'Printer configuration service' { Set-ServiceStartup -Name 'PrintDeviceConfigurationService' -Startup Manual }
     Invoke-Step 'PDF and XPS virtual printers' { Set-Features $PrintingFeatures $true }
 }
 
@@ -1467,7 +1451,7 @@ function Get-ChangeItems {
     }
 
     & $add 'Xbox (Xbox app, Game Pass, Game Bar)' 'Needed for Game Pass. Unchecked: removed, controllers keep working.' (Get-XboxEnabled) 'XboxOn' 'install Xbox' 'XboxOff' 'remove Xbox'
-    & $add 'Printing' 'Print spooler and PDF/XPS virtual printers. Unchecked: disabled.' (Get-PrintingEnabled) 'PrintingOn' 'enable printing' 'PrintingOff' 'disable printing'
+    & $add 'Printing' 'Print services and PDF/XPS virtual printers. Unchecked: disabled.' (Get-PrintingEnabled) 'PrintingOn' 'enable printing' 'PrintingOff' 'disable printing'
     & $add 'WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators. Unchecked: disabled.' (Get-VirtualizationEnabled) 'VirtOn' 'enable WSL' 'VirtOff' 'disable WSL'
     & $add 'Notifications' 'Discord, Steam, Windows Update, Windows Security. Unchecked: no notifications at all.' (Get-NotificationsEnabled) 'NotificationsOn' 'turn on notifications' 'NotificationsOff' 'turn off all notifications'
 
@@ -1699,7 +1683,6 @@ function Start-Run {
     }
 
     Invoke-Run {
-        Remove-OldVersionFiles
         Invoke-AppSteps $selected
         Invoke-ChangeSteps $selected $keepGameBar
         Invoke-PrivacySteps
