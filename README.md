@@ -75,10 +75,7 @@ Au premier lancement, rien n'est coché. Aux lancements suivants, les cases repr
 
 </details>
 
-Le script crée le raccourci **Optimisation Windows** sur le Bureau. Le relancer refait les mêmes réglages sans toucher à ce qui est déjà en place : à faire après une grosse mise à jour de Windows, ou pour cocher ou décocher un élément de la liste.
-
-> [!TIP]
-> Raccourci supprimé par erreur ? Relancez `setup.cmd` depuis la clé USB : il recrée le raccourci.
+Le script n'installe rien sur le PC : gardez `setup.cmd` sur la clé USB, ou copiez-le où vous voulez, par exemple sur le Bureau. Le relancer refait les mêmes réglages sans toucher à ce qui est déjà en place : à faire après une grosse mise à jour de Windows, ou pour cocher ou décocher un élément de la liste.
 
 ## 5. Régler la carte graphique
 
@@ -118,7 +115,7 @@ Ce réglage donne des résultats différents selon le processeur et le jeu. Mesu
 
 ### Installer WSL2 (Linux dans Windows)
 
-1. Ouvrir le raccourci **Optimisation Windows** du Bureau, cocher **WSL / virtualization**, puis redémarrer.
+1. Relancer `setup.cmd`, cocher **WSL / virtualization**, puis redémarrer.
 2. Ouvrir **Terminal** et lancer `wsl --install`, puis redémarrer.
 3. Créer le nom d'utilisateur et le mot de passe Linux demandés.
 4. Dans le terminal Ubuntu, mettre à jour :

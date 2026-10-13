@@ -27,9 +27,8 @@ exit /b
     a read-only health check. Every run does the same thing: run it again after a
     major Windows update.
 
-    Usage: double-click setup.cmd on the USB key. The script elevates itself, copies
-    itself to C:\ProgramData\OptimisationWindows and creates the "Optimisation Windows"
-    shortcut on the Desktop to run it again later.
+    Usage: double-click setup.cmd, from the USB key or from anywhere else. The script
+    elevates itself and installs nothing of its own: keep it to run it again later.
 
     This file is intentionally ASCII-only with CRLF line endings: cmd.exe needs CRLF,
     and ASCII displays correctly whatever the encoding used to read it.
@@ -40,10 +39,10 @@ exit /b
 # ---------------------------------------------------------------------------
 
 $MinBuild      = 26100
-$DataDir       = Join-Path $env:ProgramData 'OptimisationWindows'
-$TaskbarXml    = Join-Path $DataDir 'TaskbarLayout.xml'
-$InstalledCopy = Join-Path $DataDir 'setup.cmd'
-$ShortcutName  = 'Optimisation Windows.lnk'
+# Taskbar layout of autounattend.xml, already read by the taskbar policy: Firefox is added to it.
+$TaskbarXml    = Join-Path $env:SystemRoot 'Setup\Scripts\TaskbarLayoutModification.xml'
+# Background apps policy: set by every run and never by autounattend.xml, it also tells a first run.
+$AppPrivacyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy'
 
 $SchemeBalanced        = '381b4222-f694-41f0-9685-ff5bb260df2e'
 $OverlayBestPerf       = 'ded574b5-45a0-4f42-8737-46345c09c238'
@@ -172,8 +171,6 @@ try {
 if ([Environment]::OSVersion.Version.Build -lt $MinBuild) {
     Wait-Exit ('Windows 11 24H2 or newer is required (build {0} detected, {1} minimum).' -f [Environment]::OSVersion.Version.Build, $MinBuild)
 }
-
-if (-not (Test-Path -LiteralPath $DataDir)) { New-Item -Path $DataDir -ItemType Directory -Force | Out-Null }
 
 # ---------------------------------------------------------------------------
 # Low-level helpers
@@ -314,26 +311,23 @@ function Test-RebootPending {
     return [bool]($keys | Where-Object { Test-Path -LiteralPath $_ })
 }
 
-# Keeps a copy of the script in ProgramData, so the Desktop shortcut works without the USB key.
-# Running a newer setup.cmd from anywhere refreshes the copy; an older one (old USB key) leaves it alone.
-function Update-InstalledCopy {
-    if ([string]::Equals($SelfPath, $InstalledCopy, [StringComparison]::OrdinalIgnoreCase)) { return }
-    if ((Test-Path -LiteralPath $InstalledCopy) -and
-        (Get-Item -LiteralPath $InstalledCopy).LastWriteTimeUtc -gt (Get-Item -LiteralPath $SelfPath).LastWriteTimeUtc) { return }
-    Copy-Item -LiteralPath $SelfPath -Destination $InstalledCopy -Force
-}
-
-function New-DesktopShortcut {
-    $powershell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $shell = New-Object -ComObject WScript.Shell
-    $link = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) $ShortcutName))
-    $link.TargetPath = $InstalledCopy
-    # An existing shortcut keeps its old arguments (powershell.exe -File ...setup.ps1) unless cleared.
-    $link.Arguments = ''
-    $link.WorkingDirectory = $DataDir
-    $link.IconLocation = "$powershell,0"
-    $link.Description = 'Windows optimization'
-    $link.Save()
+# Earlier versions copied the script to ProgramData, with a Desktop shortcut to the copy. Their
+# taskbar layout file stays in that folder: the taskbar policy of the user still points to it.
+function Remove-OldVersionFiles {
+    $folder = Join-Path $env:ProgramData 'OptimisationWindows'
+    $paths = @(Join-Path ([Environment]::GetFolderPath('Desktop')) 'Optimisation Windows.lnk') +
+             @('setup.cmd', 'setup.ps1', 'state.json' | ForEach-Object { Join-Path $folder $_ })
+    $paths = @($paths | Where-Object {
+        (Test-Path -LiteralPath $_) -and -not [string]::Equals($_, $SelfPath, [StringComparison]::OrdinalIgnoreCase)
+    })
+    if ($paths.Count -eq 0) { return }
+    Write-Section 'Script'
+    Invoke-Step 'Remove the copy and the shortcut of earlier versions' {
+        Invoke-ForEachItem $paths { param($Path) Remove-Item -LiteralPath $Path -Force }
+        if (-not (Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)) {
+            Remove-Item -LiteralPath $folder -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 # Asks the Microsoft Store to update its apps (App Installer / winget included). Runs in the
@@ -656,7 +650,7 @@ defaultPref("privacy.globalprivacycontrol.enabled", true);
 
 function Add-FirefoxToTaskbar {
     # Windows 11 has no API to pin apps: apply a taskbar layout once through the
-    # Explorer policy (same mechanism as the unattended setup), then unlock it so
+    # Explorer policy (same mechanism and file as the unattended setup), then unlock it so
     # the user stays free to change the pins.
     $link = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Firefox.lnk'
     if (-not (Test-Path -LiteralPath $link)) { return (Skip 'Firefox shortcut not found') }
@@ -678,6 +672,7 @@ function Add-FirefoxToTaskbar {
   </CustomTaskbarLayoutCollection>
 </LayoutModificationTemplate>
 '@
+    New-Item -Path (Split-Path -Parent $TaskbarXml) -ItemType Directory -Force | Out-Null
     [IO.File]::WriteAllText($TaskbarXml, $xml, (New-Object System.Text.UTF8Encoding($false)))
     $key = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'
     Set-RegValue $key 'StartLayoutFile' $TaskbarXml 'ExpandString'
@@ -829,15 +824,15 @@ function Invoke-SystemSteps($Info) {
         Invoke-Native -File 'powercfg.exe' -Arguments @('/hibernate', 'off')
     }
 
+    # LetAppsRunInBackground_ForceAllowTheseApps also tells Get-ChangeItems that the script already ran.
     Invoke-Step 'Background apps' {
-        $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy'
         # Xbox app and Game Bar keep working in the background when they are installed.
         $allowed = @('Microsoft.SecHealthUI_8wekyb3d8bbwe')
         foreach ($name in 'Microsoft.GamingApp', 'Microsoft.XboxGamingOverlay') {
             if (Get-AppxPackage -Name $name -ErrorAction SilentlyContinue) { $allowed += "${name}_8wekyb3d8bbwe" }
         }
-        Set-RegValue $key 'LetAppsRunInBackground' 2
-        Set-RegValue $key 'LetAppsRunInBackground_ForceAllowTheseApps' ([string[]]$allowed) 'MultiString'
+        Set-RegValue $AppPrivacyKey 'LetAppsRunInBackground' 2
+        Set-RegValue $AppPrivacyKey 'LetAppsRunInBackground_ForceAllowTheseApps' ([string[]]$allowed) 'MultiString'
     }
 
     Invoke-Step 'Peer-to-peer update sharing' {
@@ -1110,11 +1105,11 @@ function Remove-ReturningApps {
     Invoke-Step 'Remove apps installed again' { Uninstall-StoreApp @(Get-ReturningApps) }
 }
 
-# The list shows what is used: checked means installed or turned on. The first run (no installed
-# copy yet) starts with nothing checked, later runs start from the current state.
+# The list shows what is used: checked means installed or turned on. The first run (background
+# apps policy not set yet) starts with nothing checked, later runs start from the current state.
 # OnId / OffId: action when the line is checked / unchecked while the state is the opposite.
 function Get-ChangeItems {
-    $firstRun = -not (Test-Path -LiteralPath $InstalledCopy)
+    $firstRun = $null -eq (Get-RegValue $AppPrivacyKey 'LetAppsRunInBackground_ForceAllowTheseApps')
     $items = New-Object System.Collections.Generic.List[object]
     $add = {
         param($Label, $Hint, [bool]$Current, $OnId, $OffId)
@@ -1372,13 +1367,7 @@ function Start-Run {
     }
 
     Write-Title
-    Write-Section 'Script'
-    Invoke-Step 'Desktop shortcut "Optimisation Windows"' {
-        Update-InstalledCopy
-        New-DesktopShortcut
-        # Left by earlier versions of the script.
-        foreach ($old in 'state.json', 'setup.ps1') { Remove-Item -LiteralPath (Join-Path $DataDir $old) -Force -ErrorAction SilentlyContinue }
-    }
+    Remove-OldVersionFiles
     Invoke-AppSteps $selected
     Invoke-ChangeSteps $selected $keepGameBar
     Invoke-PrivacySteps
