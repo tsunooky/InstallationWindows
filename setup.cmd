@@ -22,8 +22,8 @@ exit /b
 
 .DESCRIPTION
     Installs the base applications if missing, applies the privacy, performance and
-    debloat settings of the InstallationWindows guide, applies the changes checked in
-    the list (Xbox, printing, WSL/virtualization, notifications...) and runs
+    debloat settings of the InstallationWindows guide, applies the list of what is used
+    (Xbox, printing, WSL/virtualization, notifications...) and runs
     a read-only health check. Every run does the same thing: run it again after a
     major Windows update.
 
@@ -373,7 +373,7 @@ function Wait-Key([string]$Message = 'Press any key to continue...') {
 }
 
 # Generic arrow-key menu. Header: lines printed above the items.
-# Items: hashtables with Label and optional Hint.
+# Items: hashtables with Label.
 # Returns the selected index.
 function Read-Menu {
     param([string[]]$Header, [object[]]$Items, [int]$Default = 0)
@@ -393,7 +393,6 @@ function Read-Menu {
             Write-Host ($prefix + $item.Label) -ForegroundColor $color
         }
         Write-Host ''
-        if ($Items[$index].Hint) { Write-Host ('  ' + $Items[$index].Hint) -ForegroundColor Yellow }
         Write-Host '  Up/Down: move   Enter: select' -ForegroundColor DarkGray
         $key = [Console]::ReadKey($true)
         switch ($key.Key) {
@@ -504,26 +503,15 @@ function Get-SystemInfo {
     # Win32_Battery is not used: a USB UPS shows up as a battery.
     $chassis = @((Get-CimInstance -ClassName Win32_SystemEnclosure -ErrorAction SilentlyContinue).ChassisTypes)
     $isLaptop = ($cs.PCSystemType -eq 2) -or [bool]($chassis | Where-Object { $_ -in 8, 9, 10, 14, 30, 31, 32 })
-    $os  = Get-CimInstance -ClassName Win32_OperatingSystem
 
     $gpus = @(Get-CimInstance -ClassName Win32_VideoController | ForEach-Object {
         [pscustomobject]@{
             Name       = $_.Name
-            PnpId      = $_.PNPDeviceID
             Vendor     = Get-GpuVendor $_.PNPDeviceID
             IsDiscrete = Test-DiscreteGpuName $_.Name
             IsBasic    = ($_.PNPDeviceID -match 'BasicDisplay' -or $_.Name -match 'Basic Display')
         }
     })
-
-    $cpuVendor = switch -Regex ($cpu.Manufacturer) {
-        'AMD'   { 'AMD'; break }
-        'Intel' { 'Intel'; break }
-        default { 'Other' }
-    }
-
-    $ramBytes = (Get-CimInstance -ClassName Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum
-    $ramGB = [math]::Round($ramBytes / 1GB)
 
     $isVm = ($cs.Manufacturer -match 'QEMU|VMware|innotek|Xen|Parallels') -or
             ($cs.Model -match 'Virtual|KVM|VMware|VirtualBox|Q35|i440FX')
@@ -531,24 +519,13 @@ function Get-SystemInfo {
     $hasLinux = [bool](Get-Partition -ErrorAction SilentlyContinue | Where-Object { $_.GptType -eq '{0FC63DAF-8483-4772-8E79-3D69D8477DE4}' })
 
     [pscustomobject]@{
-        CpuName      = $cpu.Name.Trim()
-        CpuVendor    = $cpuVendor
         # Every X3D with more than 8 cores has two CCDs (7900X3D to 9950X3D, 7945HX3D, 9955HX3D).
         IsDualCcdX3D = ($cpu.Name -match 'X3D' -and $cpu.NumberOfCores -gt 8)
         Gpus         = $gpus
         IsLaptop     = $isLaptop
         IsVM         = $isVm
-        RamGB        = $ramGB
         HasLinux     = $hasLinux
-        Edition      = $os.Caption
-        Build        = [Environment]::OSVersion.Version.Build
     }
-}
-
-function Get-GpuSummary($Info) {
-    $names = @($Info.Gpus | Where-Object { -not $_.IsBasic } | ForEach-Object { $_.Name })
-    if ($names.Count -eq 0) { $names = @($Info.Gpus | ForEach-Object { $_.Name }) }
-    return ($names -join ' + ')
 }
 
 # ---------------------------------------------------------------------------
@@ -601,7 +578,6 @@ function Assert-Winget {
 # One winget call per package: "install" already detects an installed package.
 $WingetAlreadyInstalled = -1978335135  # 0x8A150061 (with --no-upgrade)
 $WingetNoUpdate         = -1978335189  # 0x8A15002B
-$WingetNotFound         = -1978335212  # 0x8A150014
 
 function Install-WingetPackage([string]$Id, [string]$Source = 'winget') {
     Assert-Winget
@@ -609,12 +585,6 @@ function Install-WingetPackage([string]$Id, [string]$Source = 'winget') {
                    '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
     Invoke-Native -File 'winget' -Arguments $arguments -OkCodes @(0, $WingetAlreadyInstalled, $WingetNoUpdate) | Out-Null
     if ($LASTEXITCODE -ne 0) { return (Skip 'already installed') }
-}
-
-function Uninstall-WingetPackage([string]$Id) {
-    Assert-Winget
-    Invoke-Native -File 'winget' -Arguments @('uninstall', '--id', $Id, '--exact', '--silent', '--accept-source-agreements', '--disable-interactivity') -OkCodes @(0, $WingetNotFound) | Out-Null
-    if ($LASTEXITCODE -ne 0) { return (Skip 'not installed') }
 }
 
 # ---------------------------------------------------------------------------
@@ -1140,33 +1110,43 @@ function Remove-ReturningApps {
     Invoke-Step 'Remove apps installed again' { Uninstall-StoreApp @(Get-ReturningApps) }
 }
 
-# The list shows, for each item, the action that changes its current state. Nothing is checked:
-# an unchecked item is left as it is.
+# The list shows what is used: checked means installed or turned on. The first run (no installed
+# copy yet) starts with nothing checked, later runs start from the current state.
+# OnId / OffId: action when the line is checked / unchecked while the state is the opposite.
 function Get-ChangeItems {
+    $firstRun = -not (Test-Path -LiteralPath $InstalledCopy)
     $items = New-Object System.Collections.Generic.List[object]
-    $add = { param($Id, $Label, $Hint) $items.Add(@{ Id = $Id; Label = $Label; Hint = $Hint; Value = $false }) }
+    $add = {
+        param($Label, $Hint, [bool]$Current, $OnId, $OffId)
+        $items.Add(@{ Label = $Label; Hint = $Hint; Current = $Current; Value = ($Current -and -not $firstRun); OnId = $OnId; OffId = $OffId })
+    }
 
-    if (Get-XboxEnabled) { & $add 'XboxOff' 'Remove Xbox (Xbox app, Game Pass, Game Bar)' 'Controllers keep working. Can be installed again from this list.' }
-    else { & $add 'XboxOn' 'Install Xbox (Xbox app, Game Bar)' 'Needed for Game Pass and the Game Bar.' }
+    & $add 'Xbox (Xbox app, Game Pass, Game Bar)' 'Needed for Game Pass. Unchecked: removed, controllers keep working.' (Get-XboxEnabled) 'XboxOn' 'XboxOff'
+    & $add 'Printing' 'Print spooler and PDF/XPS virtual printers. Unchecked: disabled.' (Get-PrintingEnabled) 'PrintingOn' 'PrintingOff'
+    & $add 'WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators. Unchecked: disabled.' (Get-VirtualizationEnabled) 'VirtOn' 'VirtOff'
+    & $add 'Notifications' 'Discord, Steam, Windows Update, Windows Security. Unchecked: no notifications at all.' (Get-NotificationsEnabled) 'NotificationsOn' 'NotificationsOff'
 
-    if (Get-PrintingEnabled) { & $add 'PrintingOff' 'Disable printing' 'Print spooler and PDF/XPS virtual printers.' }
-    else { & $add 'PrintingOn' 'Enable printing' 'Print spooler and PDF/XPS virtual printers.' }
-
-    if (Get-VirtualizationEnabled) { & $add 'VirtOff' 'Disable WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators stop working.' }
-    else { & $add 'VirtOn' 'Enable WSL / virtualization' 'Needed for Docker Desktop, WSL2 and Android emulators.' }
-
-    if (Get-NotificationsEnabled) { & $add 'NotificationsOff' 'Turn off notifications' 'No notifications at all: Discord, Steam, Windows Update, Windows Security.' }
-    else { & $add 'NotificationsOn' 'Turn on notifications' 'Discord, Steam, Windows Update, Windows Security.' }
-
+    # Only while they are back: they can be removed, not installed.
     $returning = @(Get-ReturningApps)
     if ($returning.Count -gt 0) {
         $names = ($returning | ForEach-Object { $ReturningApps[$_] }) -join ', '
-        & $add 'ReturningApps' "Remove apps installed again ($names)" 'Removed by the USB key, installed again since by Windows Update or the Store.'
+        & $add "$names (installed again by Windows)" 'Removed by the USB key, installed again since by Windows Update or the Store. Unchecked: removed.' $true $null 'ReturningApps'
     }
 
-    if (-not (Test-SteamInstalled)) { & $add 'Steam' 'Install Steam' 'Installed with winget, not launched at startup.' }
-    if (-not (Test-DiscordInstalled)) { & $add 'Discord' 'Install Discord' 'Installed with winget, not launched at startup.' }
+    # Never uninstalled: uninstalling Steam deletes the games in its folder.
+    & $add 'Steam' 'Installed with winget, not launched at startup. Unchecking does not uninstall it.' (Test-SteamInstalled) 'Steam' $null
+    & $add 'Discord' 'Installed with winget, not launched at startup. Unchecking does not uninstall it.' (Test-DiscordInstalled) 'Discord' $null
     return $items.ToArray()
+}
+
+# Actions of the list: only the lines that differ from the current state.
+function Get-SelectedChanges($Items) {
+    $selected = @{}
+    foreach ($item in $Items) {
+        if ($item.Value -and -not $item.Current -and $item.OnId) { $selected[$item.OnId] = $true }
+        if (-not $item.Value -and $item.Current -and $item.OffId) { $selected[$item.OffId] = $true }
+    }
+    return $selected
 }
 
 function Invoke-ChangeSteps($Selected, [bool]$KeepGameBar) {
@@ -1373,44 +1353,20 @@ function Write-Summary {
     }
 }
 
-function Confirm-Hardware($Info) {
-    $type = if ($Info.IsVM) { 'Virtual machine' } elseif ($Info.IsLaptop) { 'Laptop' } else { 'Desktop' }
-    $header = @(
-        'Detected hardware',
-        '',
-        ('CPU      ' + $Info.CpuName),
-        ('GPU      ' + (Get-GpuSummary $Info)),
-        ('RAM      {0} GB' -f $Info.RamGB),
-        ('Type     ' + $type),
-        ('Windows  {0} (build {1})' -f $Info.Edition, $Info.Build),
-        '',
-        'Is this correct?'
-    )
-    if (Read-YesNo $header $true) { return $Info }
-
-    $Info.IsLaptop = ((Read-Menu -Header 'Type of PC?' -Items @(@{ Label = 'Desktop' }, @{ Label = 'Laptop' }) -Default ([int]$Info.IsLaptop)) -eq 1)
-    if ($Info.CpuVendor -eq 'AMD') {
-        $Info.IsDualCcdX3D = Read-YesNo 'Is it an X3D with more than 8 cores (7900X3D, 9950X3D, 9955HX3D...)?' $Info.IsDualCcdX3D
-    }
-    return $Info
-}
-
 # Same run every time: applications installed if missing, all optimizations applied again,
-# and only the changes checked in the list.
-function Start-Run($Info) {
+# and the lines of the list that differ from the current state.
+function Start-Run {
     if (Test-RebootPending) { Wait-Exit 'A restart is pending (Windows Update). Restart the PC, then run the script again.' }
-    $Info = Confirm-Hardware $Info
 
     Write-Title
     Write-Host '  Reading the current state...' -ForegroundColor DarkGray
-    $items = Read-Checkboxes -Header @('Check what you want to change', 'Nothing checked: optimizations only.') -Items (Get-ChangeItems)
-    $selected = @{}
-    foreach ($item in $items) { if ($item.Value) { $selected[$item.Id] = $true } }
+    $info = Get-SystemInfo
+    $selected = Get-SelectedChanges (Read-Checkboxes -Header 'Check what you will use' -Items (Get-ChangeItems))
 
     $keepGameBar = $false
-    if ($selected.XboxOff -and $Info.IsDualCcdX3D) {
+    if ($selected.XboxOff -and $info.IsDualCcdX3D) {
         $keepGameBar = Read-YesNo @(
-            ('Your {0} uses the Game Bar to send games to the right CCD.' -f $Info.CpuName),
+            'Your X3D processor uses the Game Bar to send games to the right CCD.',
             'Keep the Game Bar?'
         ) $true
     }
@@ -1427,8 +1383,8 @@ function Start-Run($Info) {
     Invoke-ChangeSteps $selected $keepGameBar
     Invoke-PrivacySteps
     Invoke-AiSteps
-    Invoke-SystemSteps $Info
-    Invoke-PowerSteps $Info
+    Invoke-SystemSteps $info
+    Invoke-PowerSteps $info
     Invoke-GamingSteps
     Invoke-SearchSteps
     Invoke-EdgeSteps
@@ -1439,7 +1395,7 @@ function Start-Run($Info) {
     Write-Section 'Microsoft Store'
     Invoke-Step 'Store app updates (in the background)' { Start-StoreUpdates }
 
-    Show-HealthCheck $Info
+    Show-HealthCheck $info
     Write-Summary
     Wait-Exit 'Restart the PC to apply all settings.'
 }
@@ -1448,8 +1404,4 @@ function Start-Run($Info) {
 # Entry point
 # ---------------------------------------------------------------------------
 
-Write-Title
-Write-Host '  Detecting hardware...' -ForegroundColor DarkGray
-$systemInfo = Get-SystemInfo
-
-Start-Run $systemInfo
+Start-Run

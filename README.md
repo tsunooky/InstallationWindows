@@ -41,23 +41,24 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 ## 4. Lancer le script
 
 1. Ouvrir la clé USB, double-cliquer sur `setup.cmd`, puis accepter la demande d'autorisation.
-2. Vérifier le matériel détecté, puis cocher ce que vous voulez changer avec <kbd>Espace</kbd> et valider avec <kbd>Entrée</kbd>. Chaque ligne indique l'action qui sera faite ; une ligne non cochée ne change rien.
+2. Cocher ce que vous utilisez avec <kbd>Espace</kbd>, puis valider avec <kbd>Entrée</kbd>. Ce qui n'est pas coché est retiré ou désactivé : Xbox est désinstallé, l'impression, WSL et les notifications sont coupés. Steam et Discord ne sont jamais désinstallés.
 
 ```
   Windows Optimization
 
-  Check what you want to change
-  Nothing checked: optimizations only.
+  Check what you will use
 
-  > [ ] Remove Xbox (Xbox app, Game Pass, Game Bar)
-    [ ] Disable printing
-    [ ] Enable WSL / virtualization
-    [ ] Turn off notifications
-    [ ] Install Steam
-    [ ] Install Discord
+  > [ ] Xbox (Xbox app, Game Pass, Game Bar)
+    [ ] Printing
+    [ ] WSL / virtualization
+    [ ] Notifications
+    [ ] Steam
+    [ ] Discord
 
   Up/Down: move   Space: check/uncheck   Enter: confirm
 ```
+
+Au premier lancement, rien n'est coché. Aux lancements suivants, les cases reprennent l'état du PC.
 
 3. Chaque étape s'affiche avec son résultat, et les échecs éventuels sont rappelés à la fin.
 4. Redémarrer le PC.
@@ -70,11 +71,11 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 - **Système** : services inutiles arrêtés, applications en arrière-plan coupées, hibernation désactivée.
 - **Latence** (PC fixe) : mode d'alimentation « Meilleures performances », économies d'énergie désactivées.
 - **Jeu** : optimisations pour les jeux en fenêtre activées, enregistrement en arrière-plan coupé.
-- **Au choix** : Xbox, impression, WSL / virtualisation et notifications se désactivent ou se réactivent en cochant leur ligne. Les applications retirées par la clé USB et réinstallées depuis par Windows (Outlook, Copilot, Teams…) apparaissent aussi dans la liste.
+- **Au choix** : Xbox, impression, WSL / virtualisation et notifications restent actifs si leur ligne est cochée, et sont retirés ou désactivés sinon. Les applications retirées par la clé USB et réinstallées depuis par Windows (Outlook, Copilot, Teams…) apparaissent aussi dans la liste : décochées, elles sont supprimées.
 
 </details>
 
-Le script crée le raccourci **Optimisation Windows** sur le Bureau. Le relancer refait les mêmes réglages sans toucher à ce qui est déjà en place : à faire après une grosse mise à jour de Windows, ou pour activer ou désactiver un élément de la liste.
+Le script crée le raccourci **Optimisation Windows** sur le Bureau. Le relancer refait les mêmes réglages sans toucher à ce qui est déjà en place : à faire après une grosse mise à jour de Windows, ou pour cocher ou décocher un élément de la liste.
 
 > [!TIP]
 > Raccourci supprimé par erreur ? Relancez `setup.cmd` depuis la clé USB : il recrée le raccourci.
@@ -117,7 +118,7 @@ Ce réglage donne des résultats différents selon le processeur et le jeu. Mesu
 
 ### Installer WSL2 (Linux dans Windows)
 
-1. Ouvrir le raccourci **Optimisation Windows** du Bureau, cocher **Enable WSL / virtualization**, puis redémarrer.
+1. Ouvrir le raccourci **Optimisation Windows** du Bureau, cocher **WSL / virtualization**, puis redémarrer.
 2. Ouvrir **Terminal** et lancer `wsl --install`, puis redémarrer.
 3. Créer le nom d'utilisateur et le mot de passe Linux demandés.
 4. Dans le terminal Ubuntu, mettre à jour :
