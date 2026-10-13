@@ -1,4 +1,13 @@
-#Requires -Version 5.1
+<# : batch portion
+@echo off
+rem setup.cmd is both a batch file and a PowerShell script: a double-click runs this part,
+rem which hands the whole file to Windows PowerShell 5.1 (no execution policy involved).
+setlocal
+set "OW_SELF=%~f0"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command ". ([scriptblock]::Create((Get-Content -LiteralPath $env:OW_SELF -Raw)))"
+exit /b
+#>
+
 <#
 .SYNOPSIS
     Windows 11 optimization - post-installation script.
@@ -10,12 +19,12 @@
     a read-only health check. Every run does the same thing: run it again after a
     major Windows update.
 
-    Usage: from the USB key, right-click > "Run with PowerShell". The script elevates
-    itself, copies itself to C:\ProgramData\OptimisationWindows and creates the
-    "Optimisation Windows" shortcut on the Desktop to run it again later.
+    Usage: double-click setup.cmd on the USB key. The script elevates itself, copies
+    itself to C:\ProgramData\OptimisationWindows and creates the "Optimisation Windows"
+    shortcut on the Desktop to run it again later.
 
-    This file is intentionally ASCII-only so it displays correctly whatever the
-    encoding used to read it.
+    This file is intentionally ASCII-only with CRLF line endings: cmd.exe needs CRLF,
+    and ASCII displays correctly whatever the encoding used to read it.
 #>
 
 # ---------------------------------------------------------------------------
@@ -25,7 +34,7 @@
 $MinBuild      = 26100
 $DataDir       = Join-Path $env:ProgramData 'OptimisationWindows'
 $TaskbarXml    = Join-Path $DataDir 'TaskbarLayout.xml'
-$InstalledCopy = Join-Path $DataDir 'setup.ps1'
+$InstalledCopy = Join-Path $DataDir 'setup.cmd'
 $ShortcutName  = 'Optimisation Windows.lnk'
 
 $SchemeBalanced        = '381b4222-f694-41f0-9685-ff5bb260df2e'
@@ -110,16 +119,16 @@ function Wait-Exit([string]$Message) {
     exit
 }
 
-if (-not $PSCommandPath) {
-    Wait-Exit 'Run this script from the setup.ps1 file (right-click > Run with PowerShell).'
+# Path of setup.cmd, given by its batch part.
+$SelfPath = $env:OW_SELF
+if (-not $SelfPath -or -not (Test-Path -LiteralPath $SelfPath)) {
+    Wait-Exit 'Run setup.cmd with a double-click.'
 }
 
-# Always run in an elevated Windows PowerShell 5.1 (Appx and DISM cmdlets need it).
-if (-not (Test-Admin) -or $PSVersionTable.PSEdition -eq 'Core') {
-    $argList = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $PSCommandPath
+# Appx and DISM cmdlets need administrator rights: start setup.cmd again, elevated.
+if (-not (Test-Admin)) {
     try {
-        $verb = if (Test-Admin) { 'Open' } else { 'RunAs' }
-        Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList $argList -Verb $verb | Out-Null
+        Start-Process -FilePath $SelfPath -Verb RunAs | Out-Null
     } catch {
         Wait-Exit 'Administrator rights are required. Run the script again and accept the prompt.'
     }
@@ -292,20 +301,19 @@ function Test-RebootPending {
 }
 
 # Keeps a copy of the script in ProgramData, so the Desktop shortcut works without the USB key.
-# Running a newer setup.ps1 from anywhere refreshes the copy; an older one (old USB key) leaves it alone.
+# Running a newer setup.cmd from anywhere refreshes the copy; an older one (old USB key) leaves it alone.
 function Update-InstalledCopy {
-    if ([string]::Equals($PSCommandPath, $InstalledCopy, [StringComparison]::OrdinalIgnoreCase)) { return }
+    if ([string]::Equals($SelfPath, $InstalledCopy, [StringComparison]::OrdinalIgnoreCase)) { return }
     if ((Test-Path -LiteralPath $InstalledCopy) -and
-        (Get-Item -LiteralPath $InstalledCopy).LastWriteTimeUtc -gt (Get-Item -LiteralPath $PSCommandPath).LastWriteTimeUtc) { return }
-    Copy-Item -LiteralPath $PSCommandPath -Destination $InstalledCopy -Force
+        (Get-Item -LiteralPath $InstalledCopy).LastWriteTimeUtc -gt (Get-Item -LiteralPath $SelfPath).LastWriteTimeUtc) { return }
+    Copy-Item -LiteralPath $SelfPath -Destination $InstalledCopy -Force
 }
 
 function New-DesktopShortcut {
     $powershell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) $ShortcutName))
-    $link.TargetPath = $powershell
-    $link.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $InstalledCopy
+    $link.TargetPath = $InstalledCopy
     $link.WorkingDirectory = $DataDir
     $link.IconLocation = "$powershell,0"
     $link.Description = 'Windows optimization'
@@ -602,7 +610,7 @@ function Set-FirefoxConfig {
     $autoconfig = 'pref("general.config.filename", "firefox.cfg");' + "`n" + 'pref("general.config.obscure_value", 0);' + "`n"
     [IO.File]::WriteAllText((Join-Path $prefDir 'autoconfig.js'), $autoconfig, $utf8)
     $cfg = @'
-// Defaults set by setup.ps1 (this first line is ignored by Firefox)
+// Defaults set by setup.cmd (this first line is ignored by Firefox)
 defaultPref("datareporting.policy.dataSubmissionEnabled", false);
 defaultPref("datareporting.healthreport.uploadEnabled", false);
 defaultPref("app.shield.optoutstudies.enabled", false);
@@ -1419,8 +1427,8 @@ function Start-Run($Info) {
     Invoke-Step 'Desktop shortcut "Optimisation Windows"' {
         Update-InstalledCopy
         New-DesktopShortcut
-        # Left by the earlier version of the script.
-        Remove-Item -LiteralPath (Join-Path $DataDir 'state.json') -Force -ErrorAction SilentlyContinue
+        # Left by earlier versions of the script.
+        foreach ($old in 'state.json', 'setup.ps1') { Remove-Item -LiteralPath (Join-Path $DataDir $old) -Force -ErrorAction SilentlyContinue }
     }
     Invoke-AppSteps $selected
     Invoke-ChangeSteps $selected $keepGameBar
