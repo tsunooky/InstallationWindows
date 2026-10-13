@@ -41,26 +41,34 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 ## 4. Lancer le script
 
 1. Ouvrir la clé USB, double-cliquer sur `setup.cmd`, puis accepter la demande d'autorisation.
-2. Cocher ce que vous utilisez avec <kbd>Espace</kbd>, puis valider avec <kbd>Entrée</kbd>. Ce qui n'est pas coché est retiré ou désactivé : Xbox est désinstallé, l'impression, WSL et les notifications sont coupés. Steam et Discord ne sont jamais désinstallés.
+2. Cocher ce que vous utilisez avec <kbd>Espace</kbd> ou <kbd>Entrée</kbd>, puis descendre sur **START** et appuyer sur <kbd>Entrée</kbd>. Ce qui n'est pas coché est retiré ou désactivé : Xbox est désinstallé, l'impression, WSL et les notifications sont coupés. Steam et Discord ne sont jamais désinstallés. Sur **START**, le script résume ce qu'il va changer. <kbd>Échap</kbd> quitte sans rien faire.
 
 ```
-  Windows Optimization
-
-  Check what you will use
-
-  > [ ] Xbox (Xbox app, Game Pass, Game Bar)
-    [ ] Printing
-    [ ] WSL / virtualization
-    [ ] Notifications
-    [ ] Steam
-    [ ] Discord
-
-  Up/Down: move   Space: check/uncheck   Enter: confirm
+╭─ Windows Optimization ─────────────────────────────────────────────────────╮
+│                                                                            │
+│  CHECK WHAT YOU WILL USE                                                   │
+│  ▸ [ ] Xbox (Xbox app, Game Pass, Game Bar)                                │
+│    [ ] Printing                                                            │
+│    [ ] WSL / virtualization                                                │
+│    [ ] Notifications                                                       │
+│    [ ] Steam                                                               │
+│    [ ] Discord                                                             │
+│                                                                            │
+│    Needed for Game Pass. Unchecked: removed, controllers keep working.     │
+│                                                                            │
+│                                                                            │
+│    ╭───────────╮                                                           │
+│    │   START   │   3 changes + all optimizations                           │
+│    ╰───────────╯                                                           │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│  Up/Down move   Space/Enter check   Enter on START run   Esc quit          │
+╰────────────────────────────────────────────────────────────────────────────╯
 ```
 
 Au premier lancement, rien n'est coché. Aux lancements suivants, les cases reprennent l'état du PC.
 
-3. Chaque étape s'affiche avec son résultat, et les échecs éventuels sont rappelés à la fin.
+3. Les sections se cochent au fur et à mesure. À la fin, le script affiche les étapes en échec, s'il y en a, et le bilan de santé du PC.
 4. Redémarrer le PC.
 
 <details>

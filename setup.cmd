@@ -148,18 +148,64 @@ if (-not (Test-Admin)) {
 }
 
 $Host.UI.RawUI.WindowTitle = 'Windows Optimization'
-# Progress bars (Appx, DISM, downloads) slow PowerShell 5.1 down and break the step display.
+# Progress bars (Appx, DISM, downloads) slow PowerShell 5.1 down and break the frame.
 $ProgressPreference = 'SilentlyContinue'
 
-# QuickEdit: a click in the window starts a selection that freezes all output until Enter is pressed.
-# Turn it off for this window only (the user's console defaults are not touched).
+# Console helpers: QuickEdit switch, taskbar window lookup, and the spinner of the running step.
+# The spinner runs on a timer thread while a step blocks the script. It only replaces characters
+# (WriteConsoleOutputCharacterW): the colors drawn in these cells stay, and Unicode is not lost to
+# the OEM code page as with Console.Write.
+$script:SpinnerReady = $false
 try {
     Add-Type -Namespace OwNative -Name Console -MemberDefinition @'
 [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GetStdHandle(int nStdHandle);
 [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
 [DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool WriteConsoleOutputCharacter(IntPtr hConsoleOutput, string lpCharacter, uint nLength, uint dwWriteCoord, out uint lpNumberOfCharsWritten);
+
+static readonly object spinGate = new object();
+static System.Threading.Timer spinTimer;
+static string[] spinFrames;
+static int spinX, spinY, spinIndex, clockRight, clockY;
+static DateTime clockStart;
+
+static void Put(string text, int x, int y) {
+    uint written;
+    WriteConsoleOutputCharacter(GetStdHandle(-11), text, (uint)text.Length, (uint)((y << 16) | x), out written);
+}
+
+static void SpinTick(object state) {
+    lock (spinGate) {
+        if (spinTimer == null) return;
+        try {
+            spinIndex = (spinIndex + 1) % spinFrames.Length;
+            Put(spinFrames[spinIndex], spinX, spinY);
+            TimeSpan t = DateTime.Now - clockStart;
+            string clock = string.Format("{0}:{1:00}", (int)t.TotalMinutes, t.Seconds);
+            Put(clock, clockRight - clock.Length, clockY);
+        } catch { }
+    }
+}
+
+// Frames at (x, y); clock of the run ending at column right of row top.
+public static void StartSpinner(string[] frames, int x, int y, int right, int top, DateTime start) {
+    lock (spinGate) {
+        spinFrames = frames; spinX = x; spinY = y; spinIndex = 0;
+        clockRight = right; clockY = top; clockStart = start;
+        spinTimer = new System.Threading.Timer(SpinTick, null, 150, 150);
+    }
+}
+
+public static void StopSpinner() {
+    lock (spinGate) {
+        if (spinTimer != null) { spinTimer.Dispose(); spinTimer = null; }
+    }
+}
 '@
+    $script:SpinnerReady = $true
+    # QuickEdit: a click in the window starts a selection that freezes all output until Enter is
+    # pressed. Turn it off for this window only (the user's console defaults are not touched).
     $stdIn = [OwNative.Console]::GetStdHandle(-10)
     $mode = [uint32]0
     if ([OwNative.Console]::GetConsoleMode($stdIn, [ref]$mode)) {
@@ -321,7 +367,7 @@ function Remove-OldVersionFiles {
         (Test-Path -LiteralPath $_) -and -not [string]::Equals($_, $SelfPath, [StringComparison]::OrdinalIgnoreCase)
     })
     if ($paths.Count -eq 0) { return }
-    Write-Section 'Script'
+    Start-Section 'Script'
     Invoke-Step 'Remove the copy and the shortcut of earlier versions' {
         Invoke-ForEachItem $paths { param($Path) Remove-Item -LiteralPath $Path -Force }
         if (-not (Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)) {
@@ -339,132 +385,427 @@ function Start-StoreUpdates {
 }
 
 # ---------------------------------------------------------------------------
-# Console UI
+# Console UI: a full-screen frame, redrawn in place from the top-left corner
 # ---------------------------------------------------------------------------
+
+$FrameWidth = 78
+# Box-drawing and symbol characters come from their code, so the file stays ASCII.
+$BoxChar = @{
+    TL = [string][char]0x256D; TR = [string][char]0x256E; BL = [string][char]0x2570; BR = [string][char]0x256F
+    H = [string][char]0x2500; V = [string][char]0x2502; LT = [string][char]0x251C; RT = [string][char]0x2524
+}
+$Symbol = @{
+    Ok = [string][char]0x2713; Fail = [string][char]0x2717; Todo = [string][char]0x00B7; Arrow = [string][char]0x2192
+    Pointer = [string][char]0x25B8; Full = [string][char]0x2588; Light = [string][char]0x2591
+}
+$Spinner = [string[]]@(0x280B, 0x2819, 0x2839, 0x2838, 0x283C, 0x2834, 0x2826, 0x2827, 0x2807, 0x280F | ForEach-Object { [string][char]$_ })
 
 function Clear-KeyBuffer {
     # Drop keys pressed before a prompt (e.g. Enter from the launch or the UAC prompt).
     while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) }
 }
 
-function Write-Title {
+# The frame needs 80 x 25; Windows Terminal opens at 120 x 30.
+function Wait-WindowSize {
+    while ([Console]::WindowWidth -lt ($FrameWidth + 2) -or [Console]::WindowHeight -lt 25) {
+        Clear-Host
+        Write-Host ''
+        Write-Host ('  Make this window larger (at least {0} x 25), then press a key.' -f ($FrameWidth + 2)) -ForegroundColor Yellow
+        Clear-KeyBuffer
+        [void][Console]::ReadKey($true)
+    }
+}
+
+function Format-Elapsed([datetime]$Since) {
+    $t = (Get-Date) - $Since
+    return ('{0}:{1:00}' -f [int][math]::Floor($t.TotalMinutes), $t.Seconds)
+}
+
+# Text cut to Max characters. -Tail keeps the end: the error code and the reason come last.
+function Get-Truncated([string]$Text, [int]$Max, [switch]$Tail) {
+    if ($Text.Length -le $Max) { return $Text }
+    if ($Tail) { return '...' + $Text.Substring($Text.Length - ($Max - 3)) }
+    return $Text.Substring(0, $Max - 3) + '...'
+}
+
+function Get-Wrapped([string]$Text, [int]$Width) {
+    $lines = New-Object System.Collections.Generic.List[string]
+    $line = ''
+    foreach ($word in ($Text -split ' ')) {
+        if ($line.Length -eq 0) { $line = $word }
+        elseif ($line.Length + 1 + $word.Length -le $Width) { $line += ' ' + $word }
+        else { $lines.Add($line); $line = $word }
+    }
+    if ($line.Length -gt 0) { $lines.Add($line) }
+    return $lines.ToArray()
+}
+
+# Piece of a frame line: text and colors.
+function Seg([string]$Text, [string]$Fg = 'Gray', [string]$Bg = '') {
+    [pscustomobject]@{ Text = $Text; Fg = $Fg; Bg = $Bg }
+}
+
+function Write-Segment($Segment, [string]$Text) {
+    if ($Text.Length -eq 0) { return }
+    if ($Segment.Bg) { Write-Host $Text -ForegroundColor $Segment.Fg -BackgroundColor $Segment.Bg -NoNewline }
+    else { Write-Host $Text -ForegroundColor $Segment.Fg -NoNewline }
+}
+
+# Border line (top, separator or bottom), with a title on the left and info on the right.
+function Write-FrameLine([string]$Left, [string]$Right, [string]$Title = '', [string]$Info = '') {
+    $head = ''
+    if ($Title) { $head = $BoxChar.H + ' ' + $Title + ' ' }
+    $tail = ''
+    if ($Info) { $tail = ' ' + $Info + ' ' + $BoxChar.H }
+    Write-Host $Left -ForegroundColor DarkGray -NoNewline
+    if ($Title) {
+        Write-Host ($BoxChar.H + ' ') -ForegroundColor DarkGray -NoNewline
+        Write-Host $Title -ForegroundColor White -NoNewline
+        Write-Host ' ' -NoNewline
+    }
+    Write-Host ($BoxChar.H * ($FrameWidth - 2 - $head.Length - $tail.Length)) -ForegroundColor DarkGray -NoNewline
+    if ($Info) {
+        Write-Host ' ' -NoNewline
+        Write-Host $Info -ForegroundColor Gray -NoNewline
+        Write-Host (' ' + $BoxChar.H) -ForegroundColor DarkGray -NoNewline
+    }
+    Write-Host $Right -ForegroundColor DarkGray
+}
+
+# Content line: segments on the left, optional segments aligned on the right, cut to the frame.
+function Write-FrameRow([object[]]$Left = @(), [object[]]$Right = @()) {
+    $rightLength = 0
+    foreach ($segment in $Right) { $rightLength += $segment.Text.Length }
+    $room = $FrameWidth - 2 - $rightLength
+    Write-Host $BoxChar.V -ForegroundColor DarkGray -NoNewline
+    $used = 0
+    foreach ($segment in $Left) {
+        $text = $segment.Text
+        if ($used + $text.Length -gt $room) { $text = $text.Substring(0, [math]::Max(0, $room - $used)) }
+        Write-Segment $segment $text
+        $used += $text.Length
+    }
+    Write-Host (' ' * ($room - $used)) -NoNewline
+    foreach ($segment in $Right) { Write-Segment $segment $segment.Text }
+    Write-Host $BoxChar.V -ForegroundColor DarkGray
+}
+
+# Button: 3 lines, highlighted when focused.
+function Write-Button([string]$Indent, [string[]]$Labels, [int]$Focus, [object[]]$After = @()) {
+    $top = @(Seg $Indent)
+    $middle = @(Seg $Indent)
+    $bottom = @(Seg $Indent)
+    for ($i = 0; $i -lt $Labels.Count; $i++) {
+        $border = 'DarkGray'
+        $label = Seg $Labels[$i] 'White'
+        if ($i -eq $Focus) { $border = 'Cyan'; $label = Seg $Labels[$i] 'Black' 'Cyan' }
+        $line = $BoxChar.H * $Labels[$i].Length
+        if ($i -gt 0) { $top += Seg '  '; $middle += Seg '  '; $bottom += Seg '  ' }
+        $top += Seg ($BoxChar.TL + $line + $BoxChar.TR) $border
+        $middle += @((Seg $BoxChar.V $border), $label, (Seg $BoxChar.V $border))
+        $bottom += Seg ($BoxChar.BL + $line + $BoxChar.BR) $border
+    }
+    Write-FrameRow -Left $top
+    Write-FrameRow -Left ($middle + $After)
+    Write-FrameRow -Left $bottom
+}
+
+function Write-KeyHelp([string[]]$Pairs) {
+    $segments = @(Seg ' ')
+    for ($i = 0; $i -lt $Pairs.Count; $i += 2) {
+        $segments += @((Seg (' ' + $Pairs[$i]) 'Cyan'), (Seg (' ' + $Pairs[$i + 1] + '  ') 'DarkGray'))
+    }
+    Write-FrameRow -Left $segments
+}
+
+function Show-Loading {
+    Wait-WindowSize
+    try { [Console]::CursorVisible = $false } catch { $null = $_ }
     Clear-Host
-    Write-Host ''
-    Write-Host '  Windows Optimization' -ForegroundColor White
-    Write-Host ''
+    Write-FrameLine $BoxChar.TL $BoxChar.TR 'Windows Optimization'
+    Write-FrameRow
+    Write-FrameRow -Left (Seg '  Reading the current state...' 'DarkGray')
+    Write-FrameRow
+    Write-FrameLine $BoxChar.BL $BoxChar.BR
 }
 
-function Write-Section([string]$Title) {
-    Write-Host ''
-    Write-Host "  $Title" -ForegroundColor White
+function Join-Words([string[]]$Words) {
+    if ($Words.Count -le 1) { return ($Words -join '') }
+    return (($Words[0..($Words.Count - 2)] -join ', ') + ' and ' + $Words[-1])
 }
 
-function Wait-Key([string]$Message = 'Press any key to continue...') {
-    Write-Host ''
-    Write-Host "  $Message" -ForegroundColor DarkGray
-    Clear-KeyBuffer
-    [void][Console]::ReadKey($true)
+function Show-SelectionFrame([object[]]$Items, [int]$Focus) {
+    [Console]::SetCursorPosition(0, 0)
+    Write-FrameLine $BoxChar.TL $BoxChar.TR 'Windows Optimization'
+    Write-FrameRow
+    Write-FrameRow -Left (Seg '  CHECK WHAT YOU WILL USE' 'White')
+    for ($i = 0; $i -lt $Items.Count; $i++) {
+        $pointer = '    '
+        $color = 'Gray'
+        if ($i -eq $Focus) { $pointer = '  ' + $Symbol.Pointer + ' '; $color = 'Cyan' }
+        $check = Seg '[ ] ' 'DarkGray'
+        if ($Items[$i].Value) { $check = Seg '[x] ' 'Green' }
+        Write-FrameRow -Left @((Seg $pointer 'Cyan'), $check, (Seg $Items[$i].Label $color))
+    }
+    Write-FrameRow
+
+    # Under the list: the hint of the focused line, or on START what the run will change.
+    $changes = @((Get-SelectedChanges $Items).Values)
+    if ($Focus -lt $Items.Count) {
+        $text = $Items[$Focus].Hint
+        $color = 'Yellow'
+    } elseif ($changes.Count -eq 0) {
+        $text = 'Nothing to change: optimizations only.'
+        $color = 'Green'
+    } else {
+        $words = Join-Words $changes
+        $text = 'Will ' + $words + '.'
+        $color = 'Yellow'
+    }
+    $lines = @(Get-Wrapped $text ($FrameWidth - 8))
+    for ($i = 0; $i -lt 2; $i++) {
+        $line = ''
+        if ($i -lt $lines.Count) { $line = $lines[$i] }
+        Write-FrameRow -Left (Seg ('    ' + $line) $color)
+    }
+    Write-FrameRow
+
+    $status = 'No change, optimizations only'
+    if ($changes.Count -eq 1) { $status = '1 change + all optimizations' }
+    elseif ($changes.Count -gt 1) { $status = '{0} changes + all optimizations' -f $changes.Count }
+    $buttonFocus = -1
+    if ($Focus -eq $Items.Count) { $buttonFocus = 0 }
+    Write-Button '    ' @('   START   ') $buttonFocus @(Seg ('   ' + $status) 'Gray')
+    Write-FrameRow
+    Write-FrameLine $BoxChar.LT $BoxChar.RT
+    Write-KeyHelp @('Up/Down', 'move', 'Space/Enter', 'check', 'Enter on START', 'run', 'Esc', 'quit')
+    Write-FrameLine $BoxChar.BL $BoxChar.BR
 }
 
-# Generic arrow-key menu. Header: lines printed above the items.
-# Items: hashtables with Label.
-# Returns the selected index.
-function Read-Menu {
-    param([string[]]$Header, [object[]]$Items, [int]$Default = 0)
-    $index = $Default
+# Lines of the list, then a separate START button: Space and Enter check a line, and only Enter
+# on START runs. Returns $false when the user quits with Esc.
+function Read-Selection([object[]]$Items) {
+    $focus = 0
+    Clear-Host
     Clear-KeyBuffer
     while ($true) {
-        Write-Title
-        if ($Header) {
-            foreach ($line in $Header) { Write-Host "  $line" }
-            Write-Host ''
-        }
-        for ($i = 0; $i -lt $Items.Count; $i++) {
-            $item = $Items[$i]
-            $selected = ($i -eq $index)
-            $prefix = if ($selected) { '  > ' } else { '    ' }
-            $color = if ($selected) { 'Cyan' } else { 'Gray' }
-            Write-Host ($prefix + $item.Label) -ForegroundColor $color
-        }
-        Write-Host ''
-        Write-Host '  Up/Down: move   Enter: select' -ForegroundColor DarkGray
-        $key = [Console]::ReadKey($true)
-        switch ($key.Key) {
-            'UpArrow'   { $index = ($index - 1 + $Items.Count) % $Items.Count }
-            'DownArrow' { $index = ($index + 1) % $Items.Count }
-            'Enter'     { return $index }
+        Show-SelectionFrame $Items $focus
+        $key = [Console]::ReadKey($true).Key
+        $count = $Items.Count + 1
+        if ($key -eq 'UpArrow') { $focus = ($focus - 1 + $count) % $count }
+        elseif ($key -eq 'DownArrow') { $focus = ($focus + 1) % $count }
+        elseif ($key -eq 'Tab') { $focus = $Items.Count }
+        elseif ($key -eq 'Escape') { return $false }
+        elseif ($key -eq 'Spacebar' -or $key -eq 'Enter') {
+            if ($focus -lt $Items.Count) { $Items[$focus].Value = -not $Items[$focus].Value }
+            elseif ($key -eq 'Enter') { return $true }
         }
     }
 }
 
-function Read-YesNo([string[]]$Header, [bool]$Default = $true) {
-    $items = @(@{ Label = 'Yes' }, @{ Label = 'No' })
-    $defaultIndex = if ($Default) { 0 } else { 1 }
-    return ((Read-Menu -Header $Header -Items $items -Default $defaultIndex) -eq 0)
-}
-
-# Checkbox list. Items: hashtables with Label, Hint, Value (bool). Returns the items.
-function Read-Checkboxes {
-    param([string[]]$Header, [object[]]$Items)
-    $index = 0
+# Yes / No question in the frame. Returns $true for Yes.
+function Read-FrameYesNo([string]$Question, [string[]]$Lines, [bool]$Default = $true) {
+    $yes = $Default
+    Clear-Host
     Clear-KeyBuffer
     while ($true) {
-        Write-Title
-        if ($Header) {
-            foreach ($line in $Header) { Write-Host "  $line" }
-            Write-Host ''
+        [Console]::SetCursorPosition(0, 0)
+        Write-FrameLine $BoxChar.TL $BoxChar.TR 'Windows Optimization'
+        Write-FrameRow
+        Write-FrameRow -Left (Seg ('  ' + $Question) 'White')
+        Write-FrameRow
+        foreach ($line in $Lines) { Write-FrameRow -Left (Seg ('  ' + $line) 'Gray') }
+        Write-FrameRow
+        $buttonFocus = 1
+        if ($yes) { $buttonFocus = 0 }
+        Write-Button '    ' @('  YES  ', '  NO   ') $buttonFocus
+        Write-FrameRow
+        Write-FrameLine $BoxChar.LT $BoxChar.RT
+        Write-KeyHelp @('Left/Right', 'choose', 'Enter', 'confirm')
+        Write-FrameLine $BoxChar.BL $BoxChar.BR
+        $key = [Console]::ReadKey($true).Key
+        if ($key -eq 'LeftArrow' -or $key -eq 'RightArrow' -or $key -eq 'Tab') { $yes = -not $yes }
+        elseif ($key -eq 'Enter') { return $yes }
+    }
+}
+
+# Sections with their counts, progress bar, running step and the first problem.
+function Show-RunFrame {
+    $run = $script:Run
+    [Console]::SetCursorPosition(0, 0)
+    Write-FrameLine $BoxChar.TL $BoxChar.TR 'Windows Optimization' (Format-Elapsed $run.Started)
+    Write-FrameRow
+    $total = 0
+    foreach ($section in $run.Sections) {
+        $sectionTotal = [math]::Max($section.Total, $section.Done)
+        $total += $sectionTotal
+        $count = '{0}/{1}' -f $section.Done, $sectionTotal
+        $right = @()
+        if ($section.State -eq 'todo') {
+            $mark = Seg $Symbol.Todo 'DarkGray'
+            $name = Seg $section.Name 'DarkGray'
+        } elseif ($section.State -eq 'run') {
+            $mark = Seg $Spinner[0] 'Cyan'
+            $name = Seg $section.Name 'White'
+            $right = @(Seg $count 'Gray')
+        } elseif ($section.Failed -gt 0) {
+            $mark = Seg $Symbol.Fail 'Red'
+            $name = Seg $section.Name 'Gray'
+            $right = @((Seg ('{0} failed   ' -f $section.Failed) 'Red'), (Seg $count 'DarkGray'))
+        } else {
+            $mark = Seg $Symbol.Ok 'Green'
+            $name = Seg $section.Name 'Gray'
+            $right = @(Seg $count 'DarkGray')
         }
-        for ($i = 0; $i -lt $Items.Count; $i++) {
-            $item = $Items[$i]
-            $selected = ($i -eq $index)
-            $prefix = if ($selected) { '  > ' } else { '    ' }
-            $box = if ($item.Value) { '[x] ' } else { '[ ] ' }
-            $color = if ($selected) { 'Cyan' } else { 'Gray' }
-            Write-Host $prefix -ForegroundColor $color -NoNewline
-            $boxColor = if ($item.Value) { 'Green' } else { 'DarkGray' }
-            Write-Host $box -ForegroundColor $boxColor -NoNewline
-            Write-Host $item.Label -ForegroundColor $color
+        Write-FrameRow -Left @((Seg '   '), $mark, (Seg ' '), $name) -Right ($right + @(Seg '   '))
+    }
+    Write-FrameRow
+    $barWidth = 56
+    $filled = 0
+    if ($total -gt 0) { $filled = [int][math]::Floor($barWidth * [math]::Min($run.Done, $total) / $total) }
+    Write-FrameRow -Left @((Seg '   '), (Seg ($Symbol.Full * $filled) 'Cyan'), (Seg ($Symbol.Light * ($barWidth - $filled)) 'DarkGray'), (Seg ('  {0}/{1}' -f $run.Done, $total) 'Gray'))
+    Write-FrameRow -Left (Seg ('   ' + $run.Label) 'DarkGray')
+    Write-FrameRow
+    Write-FrameLine $BoxChar.LT $BoxChar.RT
+    if ($script:Failures.Count -eq 0) {
+        Write-FrameRow -Left (Seg '   No problem so far.' 'DarkGray')
+    } elseif ($script:Failures.Count -eq 1) {
+        $failure = $script:Failures[0]
+        $message = ($failure.Message -replace '\s+', ' ').Trim()
+        $room = $FrameWidth - 2 - 6 - $failure.Label.Length - 2
+        Write-FrameRow -Left @((Seg '   '), (Seg $Symbol.Fail 'Red'), (Seg (' ' + $failure.Label + ': ') 'Red'), (Seg (Get-Truncated $message $room -Tail) 'DarkRed'))
+    } else {
+        $labels = @($script:Failures | ForEach-Object { $_.Label })
+        Write-FrameRow -Left @((Seg '   '), (Seg $Symbol.Fail 'Red'), (Seg (' {0} problems: {1}' -f $labels.Count, ($labels -join ', ')) 'Red'))
+    }
+    Write-FrameLine $BoxChar.BL $BoxChar.BR
+}
+
+# End of the run: counts, failures with the end of their message, then the health check.
+function Show-FinalFrame([object[]]$Checks) {
+    $run = $script:Run
+    $inner = $FrameWidth - 2
+    $ok = 0
+    $skipped = 0
+    foreach ($section in $run.Sections) { $ok += $section.Ok; $skipped += $section.Skipped }
+    $failed = $script:Failures.Count
+    Clear-Host
+    Write-FrameLine $BoxChar.TL $BoxChar.TR 'Windows Optimization' ('done in ' + (Format-Elapsed $run.Started))
+    Write-FrameRow
+    $headline = Seg 'DONE' 'Green'
+    if ($failed -eq 1) { $headline = Seg 'DONE, 1 PROBLEM' 'Red' }
+    elseif ($failed -gt 1) { $headline = Seg ('DONE, {0} PROBLEMS' -f $failed) 'Red' }
+    Write-FrameRow -Left @((Seg '   '), $headline, (Seg ('   {0} steps: {1} OK, {2} skipped, {3} failed' -f $run.Done, $ok, $skipped, $failed) 'DarkGray'))
+    Write-FrameRow
+    if ($failed -gt 0) {
+        foreach ($failure in $script:Failures) {
+            Write-FrameRow -Left @((Seg '   '), (Seg $Symbol.Fail 'Red'), (Seg (' ' + $failure.Label) 'Red'))
+            # The last two lines: the error code and the reason come last.
+            $lines = @(Get-Wrapped (($failure.Message -replace '\s+', ' ').Trim()) ($inner - 10))
+            if ($lines.Count -gt 2) { $lines = @(('...' + $lines[-2]), $lines[-1]) }
+            foreach ($line in $lines) { Write-FrameRow -Left (Seg ('     ' + $line) 'DarkRed') }
         }
-        Write-Host ''
-        if ($Items[$index].Hint) { Write-Host ('  ' + $Items[$index].Hint) -ForegroundColor Yellow }
-        Write-Host '  Up/Down: move   Space: check/uncheck   Enter: confirm' -ForegroundColor DarkGray
-        $key = [Console]::ReadKey($true)
-        switch ($key.Key) {
-            'UpArrow'   { $index = ($index - 1 + $Items.Count) % $Items.Count }
-            'DownArrow' { $index = ($index + 1) % $Items.Count }
-            'Spacebar'  { $Items[$index].Value = -not $Items[$index].Value }
-            'Enter'     { return $Items }
+        Write-FrameRow -Left (Seg '     Failed steps are tried again at the next run.' 'DarkGray')
+        Write-FrameRow
+    }
+    Write-FrameRow -Left (Seg '   HEALTH CHECK' 'DarkGray')
+    foreach ($check in $Checks) {
+        if ($check.Level -eq 'ok') { $mark = Seg $Symbol.Ok 'Green' }
+        elseif ($check.Level -eq 'warn') { $mark = Seg '!' 'Red' }
+        else { $mark = Seg 'i' 'Yellow' }
+        $lines = @(Get-Wrapped $check.Message ($inner - 6))
+        Write-FrameRow -Left @((Seg '   '), $mark, (Seg (' ' + $lines[0]) 'Gray'))
+        for ($i = 1; $i -lt $lines.Count; $i++) { Write-FrameRow -Left (Seg ('     ' + $lines[$i]) 'Gray') }
+        if ($check.Advice) {
+            $lines = @(Get-Wrapped $check.Advice ($inner - 8))
+            Write-FrameRow -Left @((Seg '     '), (Seg $Symbol.Arrow 'DarkGray'), (Seg (' ' + $lines[0]) 'DarkGray'))
+            for ($i = 1; $i -lt $lines.Count; $i++) { Write-FrameRow -Left (Seg ('       ' + $lines[$i]) 'DarkGray') }
         }
     }
+    Write-FrameRow
+    Write-FrameLine $BoxChar.LT $BoxChar.RT
+    Write-FrameRow -Left @((Seg '   '), (Seg 'Restart the PC to apply all settings.' 'Yellow')) -Right @((Seg 'Enter' 'Cyan'), (Seg ' close   ' 'DarkGray'))
+    Write-FrameLine $BoxChar.BL $BoxChar.BR
+    Clear-KeyBuffer
+    while ([Console]::ReadKey($true).Key -ne 'Enter') { }
 }
 
 # ---------------------------------------------------------------------------
 # Step runner
 # ---------------------------------------------------------------------------
 
-$script:Failures = New-Object System.Collections.Generic.List[string]
+$script:Failures = New-Object System.Collections.Generic.List[object]
+$script:Run = $null
 
 # Marks the running step as skipped, from the step itself or from any helper it calls.
 function Skip([string]$Reason) { $script:StepSkip = $Reason }
 
-# The output of a step is discarded: no Out-Null needed inside a step.
+# Runs the steps twice: a counting pass that only lists the sections and their steps (Invoke-Step
+# does not run its action), then the real pass, drawn live. The step functions keep every change
+# inside Invoke-Step, so the counting pass changes nothing.
+function Invoke-Run([scriptblock]$Steps) {
+    $script:Run = @{ Counting = $true; Sections = (New-Object System.Collections.Generic.List[object]); Current = -1; Done = 0; Label = ''; Started = (Get-Date) }
+    & $Steps
+    $script:Run.Counting = $false
+    $script:Run.Current = -1
+    $script:Run.Started = Get-Date
+    Clear-Host
+    & $Steps
+    if ($script:Run.Current -ge 0) { Complete-Section }
+}
+
+function Complete-Section {
+    $section = $script:Run.Sections[$script:Run.Current]
+    $section.State = 'done'
+    # Steps counted but not run (winget missing, for example) no longer count.
+    $section.Total = $section.Done
+}
+
+function Start-Section([string]$Title) {
+    $run = $script:Run
+    if ($run.Current -ge 0 -and -not $run.Counting) { Complete-Section }
+    $index = -1
+    for ($i = 0; $i -lt $run.Sections.Count; $i++) { if ($run.Sections[$i].Name -eq $Title) { $index = $i } }
+    if ($index -lt 0) {
+        $run.Sections.Add(@{ Name = $Title; Total = 0; Done = 0; Ok = 0; Skipped = 0; Failed = 0; State = 'todo' })
+        $index = $run.Sections.Count - 1
+    }
+    $run.Current = $index
+    if (-not $run.Counting) { $run.Sections[$index].State = 'run' }
+}
+
+function Start-Spinner {
+    if (-not $script:SpinnerReady) { return }
+    try { [OwNative.Console]::StartSpinner($Spinner, 4, 2 + $script:Run.Current, $FrameWidth - 3, 0, $script:Run.Started) } catch { $null = $_ }
+}
+
+function Stop-Spinner {
+    if (-not $script:SpinnerReady) { return }
+    try { [OwNative.Console]::StopSpinner() } catch { $null = $_ }
+}
+
+# The output of a step is discarded, all streams included, so nothing breaks the frame: no Out-Null
+# needed inside a step. A step that throws is counted as failed and listed at the end; the run goes on.
 function Invoke-Step {
     param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][scriptblock]$Action)
-    Write-Host ("  ...  $Label") -ForegroundColor DarkGray -NoNewline
+    $stepSection = $script:Run.Sections[$script:Run.Current]
+    if ($script:Run.Counting) { $stepSection.Total++; return }
+    $script:Run.Label = $Label
+    Show-RunFrame
     $ErrorActionPreference = 'Stop'
     $script:StepSkip = $null
+    Start-Spinner
     try {
-        $null = & $Action
-        if ($script:StepSkip) {
-            Write-Host ("`r  --   $Label ({0})" -f $script:StepSkip) -ForegroundColor DarkGray
-        } else {
-            Write-Host ("`r  OK   $Label") -ForegroundColor Green
-        }
+        $null = & $Action *>&1
+        if ($script:StepSkip) { $stepSection.Skipped++ } else { $stepSection.Ok++ }
     } catch {
-        Write-Host ("`r  !!   $Label") -ForegroundColor Red
-        Write-Host ("       {0}" -f $_.Exception.Message) -ForegroundColor DarkRed
-        $script:Failures.Add($Label)
+        $stepSection.Failed++
+        $script:Failures.Add([pscustomobject]@{ Label = $Label; Message = $_.Exception.Message })
+    } finally {
+        Stop-Spinner
     }
+    $stepSection.Done++
+    $script:Run.Done++
 }
 
 # Runs Action on every item without stopping at the first failure, then fails once, naming the
@@ -701,7 +1042,7 @@ function Disable-StartupEntry([string]$Name) {
 }
 
 function Invoke-AppSteps($Selected) {
-    Write-Section 'Applications'
+    Start-Section 'Applications'
 
     Invoke-Step 'winget sources' {
         Assert-Winget
@@ -744,7 +1085,7 @@ function Invoke-AppSteps($Selected) {
 # ---------------------------------------------------------------------------
 
 function Invoke-PrivacySteps {
-    Write-Section 'Privacy and telemetry'
+    Start-Section 'Privacy and telemetry'
 
     Invoke-Step 'Telemetry and useless services' {
         Invoke-ForEachItem $ServicesToDisable { param($Service) Set-ServiceStartup -Name $Service -Startup Disabled -Stop }
@@ -796,7 +1137,7 @@ function Invoke-PrivacySteps {
 }
 
 function Invoke-AiSteps {
-    Write-Section 'AI'
+    Start-Section 'AI'
 
     Invoke-Step 'Recall, Click to Do and Settings agent' {
         $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
@@ -817,7 +1158,7 @@ function Invoke-AiSteps {
 }
 
 function Invoke-SystemSteps($Info) {
-    Write-Section 'System and services'
+    Start-Section 'System and services'
 
     Invoke-Step 'Hibernation' {
         if ($Info.IsLaptop) { return (Skip 'laptop, Windows uses it to protect the battery in standby') }
@@ -875,7 +1216,7 @@ function Invoke-SystemSteps($Info) {
 }
 
 function Invoke-PowerSteps($Info) {
-    Write-Section 'Power and latency'
+    Start-Section 'Power and latency'
 
     if ($Info.IsLaptop) {
         Invoke-Step 'Power settings' { return (Skip 'laptop, left to the manufacturer') }
@@ -938,7 +1279,7 @@ function Invoke-PowerSteps($Info) {
 }
 
 function Invoke-GamingSteps {
-    Write-Section 'Gaming and display'
+    Start-Section 'Gaming and display'
 
     Invoke-Step 'Optimizations for windowed games and VRR' {
         $key = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
@@ -964,7 +1305,7 @@ function Invoke-GamingSteps {
 }
 
 function Invoke-SearchSteps {
-    Write-Section 'Search'
+    Start-Section 'Search'
 
     Invoke-Step 'Document indexing: names and properties only' {
         Invoke-ForEachItem $PropertiesOnlyExtensions {
@@ -979,7 +1320,7 @@ function Invoke-SearchSteps {
 }
 
 function Invoke-EdgeSteps {
-    Write-Section 'Microsoft Edge'
+    Start-Section 'Microsoft Edge'
 
     Invoke-Step 'Edge in the background and startup boost' {
         $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
@@ -999,7 +1340,7 @@ function Invoke-EdgeSteps {
 }
 
 function Invoke-InterfaceSteps {
-    Write-Section 'Interface, keyboard and audio'
+    Start-Section 'Interface, keyboard and audio'
 
     Invoke-Step 'Windows Security icon in the taskbar' {
         Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Systray' 'HideSystray' 1
@@ -1041,7 +1382,7 @@ function Set-Notifications([bool]$Enabled) {
 }
 
 function Invoke-NotificationSteps {
-    Write-Section 'Notifications'
+    Start-Section 'Notifications'
     Invoke-Step 'Lock screen notifications, tips and welcome screens' {
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings' 'NOC_GLOBAL_SETTING_ALLOW_TOASTS_ABOVE_LOCK' 0
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement' 'ScoobeSystemSettingEnabled' 0
@@ -1107,39 +1448,42 @@ function Remove-ReturningApps {
 
 # The list shows what is used: checked means installed or turned on. The first run (background
 # apps policy not set yet) starts with nothing checked, later runs start from the current state.
-# OnId / OffId: action when the line is checked / unchecked while the state is the opposite.
+# OnId / OffId: action when the line is checked / unchecked while the state is the opposite, with
+# its text (OnText / OffText) for the summary shown on START.
 function Get-ChangeItems {
     $firstRun = $null -eq (Get-RegValue $AppPrivacyKey 'LetAppsRunInBackground_ForceAllowTheseApps')
     $items = New-Object System.Collections.Generic.List[object]
     $add = {
-        param($Label, $Hint, [bool]$Current, $OnId, $OffId)
-        $items.Add(@{ Label = $Label; Hint = $Hint; Current = $Current; Value = ($Current -and -not $firstRun); OnId = $OnId; OffId = $OffId })
+        param($Label, $Hint, [bool]$Current, $OnId, $OnText, $OffId, $OffText)
+        $items.Add(@{ Label = $Label; Hint = $Hint; Current = $Current; Value = ($Current -and -not $firstRun)
+                      OnId = $OnId; OnText = $OnText; OffId = $OffId; OffText = $OffText })
     }
 
-    & $add 'Xbox (Xbox app, Game Pass, Game Bar)' 'Needed for Game Pass. Unchecked: removed, controllers keep working.' (Get-XboxEnabled) 'XboxOn' 'XboxOff'
-    & $add 'Printing' 'Print spooler and PDF/XPS virtual printers. Unchecked: disabled.' (Get-PrintingEnabled) 'PrintingOn' 'PrintingOff'
-    & $add 'WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators. Unchecked: disabled.' (Get-VirtualizationEnabled) 'VirtOn' 'VirtOff'
-    & $add 'Notifications' 'Discord, Steam, Windows Update, Windows Security. Unchecked: no notifications at all.' (Get-NotificationsEnabled) 'NotificationsOn' 'NotificationsOff'
+    & $add 'Xbox (Xbox app, Game Pass, Game Bar)' 'Needed for Game Pass. Unchecked: removed, controllers keep working.' (Get-XboxEnabled) 'XboxOn' 'install Xbox' 'XboxOff' 'remove Xbox'
+    & $add 'Printing' 'Print spooler and PDF/XPS virtual printers. Unchecked: disabled.' (Get-PrintingEnabled) 'PrintingOn' 'enable printing' 'PrintingOff' 'disable printing'
+    & $add 'WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators. Unchecked: disabled.' (Get-VirtualizationEnabled) 'VirtOn' 'enable WSL' 'VirtOff' 'disable WSL'
+    & $add 'Notifications' 'Discord, Steam, Windows Update, Windows Security. Unchecked: no notifications at all.' (Get-NotificationsEnabled) 'NotificationsOn' 'turn on notifications' 'NotificationsOff' 'turn off all notifications'
 
     # Only while they are back: they can be removed, not installed.
     $returning = @(Get-ReturningApps)
     if ($returning.Count -gt 0) {
         $names = ($returning | ForEach-Object { $ReturningApps[$_] }) -join ', '
-        & $add "$names (installed again by Windows)" 'Removed by the USB key, installed again since by Windows Update or the Store. Unchecked: removed.' $true $null 'ReturningApps'
+        & $add "$names (installed again by Windows)" 'Removed by the USB key, installed again since by Windows Update or the Store. Unchecked: removed.' $true $null $null 'ReturningApps' "remove $names"
     }
 
     # Never uninstalled: uninstalling Steam deletes the games in its folder.
-    & $add 'Steam' 'Installed with winget, not launched at startup. Unchecking does not uninstall it.' (Test-SteamInstalled) 'Steam' $null
-    & $add 'Discord' 'Installed with winget, not launched at startup. Unchecking does not uninstall it.' (Test-DiscordInstalled) 'Discord' $null
+    & $add 'Steam' 'Installed with winget, not launched at startup. Unchecking does not uninstall it.' (Test-SteamInstalled) 'Steam' 'install Steam' $null $null
+    & $add 'Discord' 'Installed with winget, not launched at startup. Unchecking does not uninstall it.' (Test-DiscordInstalled) 'Discord' 'install Discord' $null $null
     return $items.ToArray()
 }
 
-# Actions of the list: only the lines that differ from the current state.
+# Actions of the list: only the lines that differ from the current state, as Id = text, in the
+# order of the list. The text is never empty, so $selected.XboxOff can be tested as a flag.
 function Get-SelectedChanges($Items) {
-    $selected = @{}
+    $selected = [ordered]@{}
     foreach ($item in $Items) {
-        if ($item.Value -and -not $item.Current -and $item.OnId) { $selected[$item.OnId] = $true }
-        if (-not $item.Value -and $item.Current -and $item.OffId) { $selected[$item.OffId] = $true }
+        if ($item.Value -and -not $item.Current -and $item.OnId) { $selected[$item.OnId] = $item.OnText }
+        if (-not $item.Value -and $item.Current -and $item.OffId) { $selected[$item.OffId] = $item.OffText }
     }
     return $selected
 }
@@ -1147,7 +1491,7 @@ function Get-SelectedChanges($Items) {
 function Invoke-ChangeSteps($Selected, [bool]$KeepGameBar) {
     $changes = @($Selected.Keys | Where-Object { $_ -notin 'Steam', 'Discord' })
     if ($changes.Count -eq 0) { return }
-    Write-Section 'Changes'
+    Start-Section 'Changes'
     if ($Selected.XboxOff) { Disable-Xbox -KeepGameBar $KeepGameBar }
     if ($Selected.XboxOn) { Enable-Xbox }
     if ($Selected.PrintingOff) { Disable-Printing }
@@ -1242,30 +1586,25 @@ public static class OwDisplayInfo
     $script:displayHelperLoaded = $true
 }
 
-function Write-Check([string]$Level, [string]$Message, [string]$Advice) {
-    switch ($Level) {
-        'ok'    { Write-Host '  OK   ' -ForegroundColor Green -NoNewline }
-        'warn'  { Write-Host '  !!   ' -ForegroundColor Red -NoNewline }
-        default { Write-Host '  i    ' -ForegroundColor Yellow -NoNewline }
-    }
-    Write-Host $Message
-    if ($Advice) { Write-Host "       -> $Advice" -ForegroundColor DarkGray }
+# Level: ok, warn or info. Shown by Show-FinalFrame.
+function Add-Check([string]$Level, [string]$Message, [string]$Advice) {
+    $script:Checks.Add([pscustomobject]@{ Level = $Level; Message = $Message; Advice = $Advice })
 }
 
-function Show-HealthCheck($Info) {
-    Write-Section 'Health check'
+function Get-HealthChecks($Info) {
+    $script:Checks = New-Object System.Collections.Generic.List[object]
 
     # VBS
     $dg = Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' -ClassName Win32_DeviceGuard -ErrorAction SilentlyContinue
     if ($dg -and $dg.VirtualizationBasedSecurityStatus -eq 2) {
-        Write-Check 'warn' 'VBS / memory integrity still running' 'Windows Security > Device security > Core isolation: turn off, then restart'
+        Add-Check 'warn' 'VBS / memory integrity still running' 'Windows Security > Device security > Core isolation: turn off, then restart'
     } else {
-        Write-Check 'ok' 'VBS disabled'
+        Add-Check 'ok' 'VBS disabled'
     }
 
     if ($Info.IsVM) {
-        Write-Check 'info' 'Virtual machine: hardware checks skipped'
-        return
+        Add-Check 'info' 'Virtual machine: hardware checks skipped'
+        return $script:Checks.ToArray()
     }
 
     # Secure Boot: required by anti-cheats (Vanguard: error VAN 9003). The 2011 certificate that
@@ -1273,13 +1612,13 @@ function Show-HealthCheck($Info) {
     try {
         if (Confirm-SecureBootUEFI) {
             $db = [Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI -Name db).Bytes)
-            if ($db -match 'Windows UEFI CA 2023') { Write-Check 'ok' 'Secure Boot enabled, 2023 certificates present' }
-            else { Write-Check 'warn' 'Secure Boot enabled, 2023 certificates missing' 'Install all Windows updates, then update the BIOS' }
+            if ($db -match 'Windows UEFI CA 2023') { Add-Check 'ok' 'Secure Boot enabled, 2023 certificates present' }
+            else { Add-Check 'warn' 'Secure Boot enabled, 2023 certificates missing' 'Install all Windows updates, then update the BIOS' }
         } else {
-            Write-Check 'warn' 'Secure Boot disabled' 'Required by the anti-cheat of Valorant, League of Legends, Battlefield...'
+            Add-Check 'warn' 'Secure Boot disabled' 'Required by the anti-cheat of Valorant, League of Legends, Battlefield...'
         }
     } catch {
-        Write-Check 'info' 'Secure Boot not supported (legacy BIOS / CSM)'
+        Add-Check 'info' 'Secure Boot not supported (legacy BIOS / CSM)'
     }
 
     if (-not $Info.IsLaptop) {
@@ -1294,9 +1633,9 @@ function Show-HealthCheck($Info) {
             # Speed is the module's JEDEC (base) speed: running above it means EXPO / XMP is active.
             $jedec = [int]($modules | Measure-Object -Property Speed -Minimum).Minimum
             if ($jedec -gt 0 -and $speed -gt $jedec) {
-                Write-Check 'ok' ($label + ', EXPO/XMP active')
+                Add-Check 'ok' ($label + ', EXPO/XMP active')
             } else {
-                Write-Check 'info' ($label + ', no EXPO/XMP profile detected') 'If the kit is rated faster, enable EXPO (AMD) or XMP (Intel) in the BIOS'
+                Add-Check 'info' ($label + ', no EXPO/XMP profile detected') 'If the kit is rated faster, enable EXPO (AMD) or XMP (Intel) in the BIOS'
             }
         }
 
@@ -1306,16 +1645,16 @@ function Show-HealthCheck($Info) {
             $installed = ($modules | Measure-Object -Property Capacity -Sum).Sum
             $visible = (Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory
             $reserved = [math]::Max(0, [math]::Round(($installed - $visible) / 1GB, 1))
-            Write-Check 'info' ('Integrated graphics enabled ({0}), {1} GB of RAM reserved' -f $integrated[0].Name, $reserved) 'Not used for video encoding or an extra display? Disable it in the BIOS'
+            Add-Check 'info' ('Integrated graphics enabled ({0}), {1} GB of RAM reserved' -f $integrated[0].Name, $reserved) 'Not used for video encoding or an extra display? Disable it in the BIOS'
         }
     }
 
     # Graphics driver
     foreach ($gpu in $Info.Gpus) {
         if ($gpu.IsBasic) {
-            Write-Check 'warn' "Microsoft basic display driver ($($gpu.Name))" 'Install the driver with NVIDIA App or AMD Adrenalin'
+            Add-Check 'warn' "Microsoft basic display driver ($($gpu.Name))" 'Install the driver with NVIDIA App or AMD Adrenalin'
         } elseif ($gpu.IsDiscrete) {
-            Write-Check 'ok' "Graphics driver installed: $($gpu.Name)"
+            Add-Check 'ok' "Graphics driver installed: $($gpu.Name)"
         }
     }
 
@@ -1325,68 +1664,59 @@ function Show-HealthCheck($Info) {
         foreach ($d in [OwDisplayInfo]::Get()) {
             $label = 'Display {0}x{1} at {2} Hz' -f $d.Width, $d.Height, $d.CurrentHz
             if ($d.MaxHz -gt $d.CurrentHz) {
-                Write-Check 'warn' $label ('{0} Hz available: Settings > System > Display > Advanced display' -f $d.MaxHz)
+                Add-Check 'warn' $label ('{0} Hz available: Settings > System > Display > Advanced display' -f $d.MaxHz)
             } else {
-                Write-Check 'ok' $label
+                Add-Check 'ok' $label
             }
         }
     } catch {
-        Write-Check 'info' 'Displays: cannot be checked'
+        Add-Check 'info' 'Displays: cannot be checked'
     }
+    return $script:Checks.ToArray()
 }
 
 # ---------------------------------------------------------------------------
 # Flows
 # ---------------------------------------------------------------------------
 
-function Write-Summary {
-    Write-Host ''
-    if ($script:Failures.Count -eq 0) {
-        Write-Host '  All steps succeeded.' -ForegroundColor Green
-    } else {
-        Write-Host ('  {0} step(s) failed: {1}' -f $script:Failures.Count, ($script:Failures -join ', ')) -ForegroundColor Red
-    }
-}
-
 # Same run every time: applications installed if missing, all optimizations applied again,
 # and the lines of the list that differ from the current state.
 function Start-Run {
     if (Test-RebootPending) { Wait-Exit 'A restart is pending (Windows Update). Restart the PC, then run the script again.' }
 
-    Write-Title
-    Write-Host '  Reading the current state...' -ForegroundColor DarkGray
+    Show-Loading
     $info = Get-SystemInfo
-    $selected = Get-SelectedChanges (Read-Checkboxes -Header 'Check what you will use' -Items (Get-ChangeItems))
+    $items = @(Get-ChangeItems)
+    if (-not (Read-Selection $items)) { exit 0 }
+    $selected = Get-SelectedChanges $items
 
     $keepGameBar = $false
     if ($selected.XboxOff -and $info.IsDualCcdX3D) {
-        $keepGameBar = Read-YesNo @(
-            'Your X3D processor uses the Game Bar to send games to the right CCD.',
-            'Keep the Game Bar?'
-        ) $true
+        $keepGameBar = Read-FrameYesNo 'KEEP THE GAME BAR?' @('Your X3D processor uses the Game Bar to send games to the right CCD.')
     }
 
-    Write-Title
-    Remove-OldVersionFiles
-    Invoke-AppSteps $selected
-    Invoke-ChangeSteps $selected $keepGameBar
-    Invoke-PrivacySteps
-    Invoke-AiSteps
-    Invoke-SystemSteps $info
-    Invoke-PowerSteps $info
-    Invoke-GamingSteps
-    Invoke-SearchSteps
-    Invoke-EdgeSteps
-    Invoke-InterfaceSteps
-    Invoke-NotificationSteps
+    Invoke-Run {
+        Remove-OldVersionFiles
+        Invoke-AppSteps $selected
+        Invoke-ChangeSteps $selected $keepGameBar
+        Invoke-PrivacySteps
+        Invoke-AiSteps
+        Invoke-SystemSteps $info
+        Invoke-PowerSteps $info
+        Invoke-GamingSteps
+        Invoke-SearchSteps
+        Invoke-EdgeSteps
+        Invoke-InterfaceSteps
+        Invoke-NotificationSteps
+        # Last, so the Store does not update App Installer while winget is installing apps.
+        Start-Section 'Microsoft Store'
+        Invoke-Step 'Store app updates (in the background)' { Start-StoreUpdates }
+    }
 
-    # Last, so the Store does not update App Installer while winget is installing apps.
-    Write-Section 'Microsoft Store'
-    Invoke-Step 'Store app updates (in the background)' { Start-StoreUpdates }
-
-    Show-HealthCheck $info
-    Write-Summary
-    Wait-Exit 'Restart the PC to apply all settings.'
+    $script:Run.Label = 'Health check'
+    Show-RunFrame
+    Show-FinalFrame @(Get-HealthChecks $info)
+    exit 0
 }
 
 # ---------------------------------------------------------------------------
