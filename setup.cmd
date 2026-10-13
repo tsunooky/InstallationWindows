@@ -1,66 +1,32 @@
 <# : batch portion
 @echo off
-rem setup.cmd is both a batch file and a PowerShell script: a double-click runs this part,
-rem which hands the whole file to Windows PowerShell 5.1 (no execution policy involved).
 setlocal EnableExtensions DisableDelayedExpansion
 set "OW_SELF=%~f0"
-rem Set only by the elevated restart of the script, so it never restarts itself in a loop.
 set "OW_ELEVATED="
 if /i "%~1"=="/elevated" set "OW_ELEVATED=1"
-rem 64-bit PowerShell even when a 32-bit program starts this file (Sysnative only exists there).
 set "OW_PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 if exist "%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe" set "OW_PS=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
 "%OW_PS%" -NoProfile -Command ". ([scriptblock]::Create((Get-Content -LiteralPath $env:OW_SELF -Raw)))"
-rem The script always ends with exit 0: any other code is a crash, keep its message on screen.
 if errorlevel 1 pause
 exit /b
 #>
 
-<#
-.SYNOPSIS
-    Windows 11 optimization - post-installation script.
-
-.DESCRIPTION
-    Installs the applications chosen at the first run, applies the privacy, performance and
-    debloat settings of the InstallationWindows guide, applies the list of what is used
-    (Xbox, printing, WSL/virtualization, notifications...) and runs
-    a read-only health check. Every run does the same thing: run it again after a
-    major Windows update.
-
-    Usage: double-click setup.cmd, from the USB key or from anywhere else. The script
-    elevates itself and installs nothing of its own: keep it to run it again later.
-
-    This file is intentionally ASCII-only with CRLF line endings: cmd.exe needs CRLF,
-    and ASCII displays correctly whatever the encoding used to read it.
-#>
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 $MinBuild      = 26100
-# Taskbar layout of autounattend.xml, already read by the taskbar policy: Firefox is added to it.
 $TaskbarXml    = Join-Path $env:SystemRoot 'Setup\Scripts\TaskbarLayoutModification.xml'
-# Background apps policy: set by every run and never by autounattend.xml, it also tells a first run.
 $AppPrivacyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy'
-# Lines of the list that install an application (Invoke-AppSteps); the others are Invoke-ChangeSteps.
 $AppIds        = @('Firefox', 'Vlc', 'Steam', 'Discord')
 
 $SchemeBalanced        = '381b4222-f694-41f0-9685-ff5bb260df2e'
 $OverlayBestPerf       = 'ded574b5-45a0-4f42-8737-46345c09c238'
 $NullPersistentHandler = '{098f2470-bae0-11cd-b579-08002b30bfeb}'
 
-# Services that run by default on a clean install and are useless here.
-# Rule: only services that are actually running on a fresh Windows 26H2.
 $ServicesToDisable = @(
-    'DiagTrack',      # Connected User Experiences and Telemetry
-    'WSAIFabricSvc',  # Windows AI components host (Recall, Click to Do, Settings agent are disabled)
-    'TrkWks',         # Distributed Link Tracking Client (NTFS links across networked PCs)
-    'LanmanServer'    # Server (SMB file sharing from this PC; reading shares elsewhere still works)
+    'DiagTrack',
+    'WSAIFabricSvc',
+    'TrkWks',
+    'LanmanServer'
 )
 
-# Xbox apps with background processes. Xbox Identity Provider and TCUI are kept:
-# they have no process and Steam games using Xbox Live need them.
 $XboxPackages = @(
     'Microsoft.GamingApp',
     'Microsoft.GamingServices',
@@ -70,13 +36,11 @@ $XboxPackages = @(
     'Microsoft.Edge.GameAssist'
 )
 
-# Microsoft Store IDs used to reinstall the Xbox apps.
 $XboxStoreIds = [ordered]@{
     'Xbox'          = '9MV0B5HZVK9Z'
     'Xbox Game Bar' = '9NZKPSTSNW4P'
 }
 
-# Apps removed by the USB key that Windows Update or the Store may install again.
 $ReturningApps = [ordered]@{
     'Microsoft.OutlookForWindows'  = 'Outlook'
     'Microsoft.Copilot'            = 'Copilot'
@@ -85,12 +49,10 @@ $ReturningApps = [ordered]@{
     'Microsoft.Windows.DevHome'    = 'Dev Home'
 }
 
-# Optional Windows features of the modules.
 $PrintingFeatures      = @('Printing-PrintToPDFServices-Features', 'Printing-XPSServices-Features')
 $VirtualizationEnable  = @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform', 'HypervisorPlatform')
 $VirtualizationDisable = $VirtualizationEnable + @('Microsoft-Hyper-V-All', 'Containers-DisposableClientVM')
 
-# File types indexed by name and properties only (content not indexed).
 $PropertiesOnlyExtensions = @(
     '.txt', '.log', '.md', '.csv', '.json', '.xml', '.ini', '.cfg', '.yml', '.yaml', '.toml',
     '.ps1', '.psm1', '.bat', '.cmd', '.sh', '.py', '.js', '.mjs', '.ts', '.tsx', '.jsx',
@@ -99,7 +61,6 @@ $PropertiesOnlyExtensions = @(
     '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf', '.rtf', '.odt', '.ods', '.odp'
 )
 
-# Telemetry scheduled tasks (missing tasks are ignored).
 $TelemetryTasks = @(
     '\Microsoft\Windows\Customer Experience Improvement Program\Consolidator',
     '\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip',
@@ -110,10 +71,6 @@ $TelemetryTasks = @(
     '\Microsoft\Windows\Feedback\Siuf\DmClientOnScenarioDownload',
     '\Microsoft\Windows\Windows Error Reporting\QueueReporting'
 )
-
-# ---------------------------------------------------------------------------
-# Elevation, PowerShell edition and Windows version checks
-# ---------------------------------------------------------------------------
 
 function Test-Admin {
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -128,19 +85,14 @@ function Wait-Exit([string]$Message) {
     exit 0
 }
 
-# Path of setup.cmd, given by its batch part.
 $SelfPath = $env:OW_SELF
 if (-not $SelfPath -or -not (Test-Path -LiteralPath $SelfPath)) {
     Wait-Exit 'Run setup.cmd with a double-click.'
 }
 
-# Appx and DISM cmdlets need administrator rights: start setup.cmd again, elevated.
 if (-not (Test-Admin)) {
-    # Already restarted elevated, still not an administrator (standard account without UAC).
     if ($env:OW_ELEVATED) { Wait-Exit 'Administrator rights are required. Run the script from an administrator account.' }
     try {
-        # Through cmd.exe rather than the "runas" verb of .cmd files: that verb runs cmd /C "%1",
-        # which drops the quotes of a path holding & ( ) @ ^, such as "InstallationWindows-main (1)".
         $arguments = '/d /c ""{0}" /elevated"' -f $SelfPath
         Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList $arguments -Verb RunAs | Out-Null
     } catch {
@@ -150,13 +102,8 @@ if (-not (Test-Admin)) {
 }
 
 $Host.UI.RawUI.WindowTitle = 'Windows Optimization'
-# Progress bars (Appx, DISM, downloads) slow PowerShell 5.1 down and break the frame.
 $ProgressPreference = 'SilentlyContinue'
 
-# Console helpers: QuickEdit switch, taskbar window lookup, and the spinner of the running step.
-# The spinner runs on a timer thread while a step blocks the script. It only replaces characters
-# (WriteConsoleOutputCharacterW): the colors drawn in these cells stay, and Unicode is not lost to
-# the OEM code page as with Console.Write.
 $script:SpinnerReady = $false
 try {
     Add-Type -Namespace OwNative -Name Console -MemberDefinition @'
@@ -190,7 +137,6 @@ static void SpinTick(object state) {
     }
 }
 
-// Frames at (x, y); clock of the run ending at column right of row top.
 public static void StartSpinner(string[] frames, int x, int y, int right, int top, DateTime start) {
     lock (spinGate) {
         spinFrames = frames; spinX = x; spinY = y; spinIndex = 0;
@@ -206,8 +152,6 @@ public static void StopSpinner() {
 }
 '@
     $script:SpinnerReady = $true
-    # QuickEdit: a click in the window starts a selection that freezes all output until Enter is
-    # pressed. Turn it off for this window only (the user's console defaults are not touched).
     $stdIn = [OwNative.Console]::GetStdHandle(-10)
     $mode = [uint32]0
     if ([OwNative.Console]::GetConsoleMode($stdIn, [ref]$mode)) {
@@ -219,10 +163,6 @@ public static void StopSpinner() {
 if ([Environment]::OSVersion.Version.Build -lt $MinBuild) {
     Wait-Exit ('Windows 11 24H2 or newer is required (build {0} detected, {1} minimum).' -f [Environment]::OSVersion.Version.Build, $MinBuild)
 }
-
-# ---------------------------------------------------------------------------
-# Low-level helpers
-# ---------------------------------------------------------------------------
 
 function Set-RegValue {
     param(
@@ -265,7 +205,6 @@ function Set-ServiceStartup {
     try {
         Set-Service -Name $Name -StartupType $Startup -ErrorAction Stop
     } catch {
-        # Some services refuse Set-Service: fall back to the registry Start value.
         $startValue = @{ 'Automatic' = 2; 'Manual' = 3; 'Disabled' = 4 }[$Startup]
         Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$Name" -Name 'Start' -Value $startValue
     }
@@ -290,20 +229,16 @@ function Remove-Shortcut([string[]]$Names) {
     }
 }
 
-# Removes Appx packages for all users and deprovisions them. Fails only if one is still
-# installed for the current user; packages Windows marks as non-removable are reported, not failed.
 function Uninstall-StoreApp([string[]]$Names) {
     $provisioned = @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue)
     $protected = @()
     $errors = @{}
     foreach ($name in $Names) {
-        # Deprovision first so the app is not installed again for new users.
         foreach ($package in @($provisioned | Where-Object { $_.DisplayName -eq $name })) {
             Remove-AppxProvisionedPackage -Online -AllUsers -PackageName $package.PackageName -ErrorAction SilentlyContinue | Out-Null
         }
         foreach ($package in @(Get-AppxPackage -AllUsers -Name $name -ErrorAction SilentlyContinue)) {
             if ($package.NonRemovable) { $protected += $name; continue }
-            # Fall back to the current user when the all-users removal is refused.
             try { Remove-AppxPackage -Package $package.PackageFullName -AllUsers -ErrorAction Stop }
             catch {
                 try { Remove-AppxPackage -Package $package.PackageFullName -ErrorAction Stop }
@@ -318,7 +253,6 @@ function Uninstall-StoreApp([string[]]$Names) {
     if ($protected.Count -gt 0) { return (Skip ('protected by Windows, kept: {0}' -f (($protected | Select-Object -Unique) -join ', '))) }
 }
 
-# Optional features: one DISM query for the whole run (DISM is slow), updated after each change.
 $script:FeatureStates = $null
 function Get-FeatureStates {
     if ($null -eq $script:FeatureStates) {
@@ -333,7 +267,6 @@ function Test-FeatureEnabled([string[]]$Names) {
     return [bool]($Names | Where-Object { $states[$_] -like 'Enable*' })
 }
 
-# Features missing from this edition (Hyper-V and Sandbox on Home) are ignored.
 function Set-Features([string[]]$Names, [bool]$Enabled) {
     $states = Get-FeatureStates
     Invoke-ForEachItem $Names {
@@ -350,7 +283,6 @@ function Set-Features([string[]]$Names, [bool]$Enabled) {
     }
 }
 
-# Windows features cannot be changed reliably while an update waits for a restart.
 function Test-RebootPending {
     $keys = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending',
@@ -359,20 +291,13 @@ function Test-RebootPending {
     return [bool]($keys | Where-Object { Test-Path -LiteralPath $_ })
 }
 
-# Asks the Microsoft Store to update its apps (App Installer / winget included). Runs in the
-# background: the Store downloads the updates on its own, nothing to wait for.
 function Start-StoreUpdates {
     $apps = Get-CimInstance -Namespace 'root\cimv2\mdm\dmmap' -ClassName 'MDM_EnterpriseModernAppManagement_AppManagement01' -ErrorAction SilentlyContinue
     if (-not $apps) { return (Skip 'Store update service not available') }
     $apps | Invoke-CimMethod -MethodName UpdateScanMethod | Out-Null
 }
 
-# ---------------------------------------------------------------------------
-# Console UI: a full-screen frame, redrawn in place from the top-left corner
-# ---------------------------------------------------------------------------
-
 $FrameWidth = 78
-# Box-drawing and symbol characters come from their code, so the file stays ASCII.
 $BoxChar = @{
     TL = [string][char]0x256D; TR = [string][char]0x256E; BL = [string][char]0x2570; BR = [string][char]0x256F
     H = [string][char]0x2500; V = [string][char]0x2502; LT = [string][char]0x251C; RT = [string][char]0x2524
@@ -384,11 +309,9 @@ $Symbol = @{
 $Spinner = [string[]]@(0x280B, 0x2819, 0x2839, 0x2838, 0x283C, 0x2834, 0x2826, 0x2827, 0x2807, 0x280F | ForEach-Object { [string][char]$_ })
 
 function Clear-KeyBuffer {
-    # Drop keys pressed before a prompt (e.g. Enter from the launch or the UAC prompt).
     while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) }
 }
 
-# The frame needs 80 x 25; Windows Terminal opens at 120 x 30.
 function Wait-WindowSize {
     while ([Console]::WindowWidth -lt ($FrameWidth + 2) -or [Console]::WindowHeight -lt 25) {
         Clear-Host
@@ -404,7 +327,6 @@ function Format-Elapsed([datetime]$Since) {
     return ('{0}:{1:00}' -f [int][math]::Floor($t.TotalMinutes), $t.Seconds)
 }
 
-# Text cut to Max characters. -Tail keeps the end: the error code and the reason come last.
 function Get-Truncated([string]$Text, [int]$Max, [switch]$Tail) {
     if ($Text.Length -le $Max) { return $Text }
     if ($Tail) { return '...' + $Text.Substring($Text.Length - ($Max - 3)) }
@@ -423,7 +345,6 @@ function Get-Wrapped([string]$Text, [int]$Width) {
     return $lines.ToArray()
 }
 
-# Piece of a frame line: text and colors.
 function Seg([string]$Text, [string]$Fg = 'Gray', [string]$Bg = '') {
     [pscustomobject]@{ Text = $Text; Fg = $Fg; Bg = $Bg }
 }
@@ -434,7 +355,6 @@ function Write-Segment($Segment, [string]$Text) {
     else { Write-Host $Text -ForegroundColor $Segment.Fg -NoNewline }
 }
 
-# Border line (top, separator or bottom), with a title on the left and info on the right.
 function Write-FrameLine([string]$Left, [string]$Right, [string]$Title = '', [string]$Info = '') {
     $head = ''
     if ($Title) { $head = $BoxChar.H + ' ' + $Title + ' ' }
@@ -455,7 +375,6 @@ function Write-FrameLine([string]$Left, [string]$Right, [string]$Title = '', [st
     Write-Host $Right -ForegroundColor DarkGray
 }
 
-# Content line: segments on the left, optional segments aligned on the right, cut to the frame.
 function Write-FrameRow([object[]]$Left = @(), [object[]]$Right = @()) {
     $rightLength = 0
     foreach ($segment in $Right) { $rightLength += $segment.Text.Length }
@@ -473,7 +392,6 @@ function Write-FrameRow([object[]]$Left = @(), [object[]]$Right = @()) {
     Write-Host $BoxChar.V -ForegroundColor DarkGray
 }
 
-# Button: 3 lines, highlighted when focused.
 function Write-Button([string]$Indent, [string[]]$Labels, [int]$Focus, [object[]]$After = @()) {
     $top = @(Seg $Indent)
     $middle = @(Seg $Indent)
@@ -532,7 +450,6 @@ function Show-SelectionFrame([object[]]$Items, [int]$Focus) {
     }
     Write-FrameRow
 
-    # Under the list: the hint of the focused line, or on START what the run will change.
     $changes = @((Get-SelectedChanges $Items).Values)
     if ($Focus -lt $Items.Count) {
         $text = $Items[$Focus].Hint
@@ -565,8 +482,6 @@ function Show-SelectionFrame([object[]]$Items, [int]$Focus) {
     Write-FrameLine $BoxChar.BL $BoxChar.BR
 }
 
-# Lines of the list, then a separate START button: Space and Enter check a line, and only Enter
-# on START runs. Returns $false when the user quits with Esc.
 function Read-Selection([object[]]$Items) {
     $focus = 0
     Clear-Host
@@ -586,7 +501,6 @@ function Read-Selection([object[]]$Items) {
     }
 }
 
-# Yes / No question in the frame. Returns $true for Yes.
 function Read-FrameYesNo([string]$Question, [string[]]$Lines, [bool]$Default = $true) {
     $yes = $Default
     Clear-Host
@@ -612,7 +526,6 @@ function Read-FrameYesNo([string]$Question, [string[]]$Lines, [bool]$Default = $
     }
 }
 
-# Sections with their counts, progress bar, running step and the first problem.
 function Show-RunFrame {
     $run = $script:Run
     [Console]::SetCursorPosition(0, 0)
@@ -664,7 +577,6 @@ function Show-RunFrame {
     Write-FrameLine $BoxChar.BL $BoxChar.BR
 }
 
-# End of the run: counts, failures with the end of their message, then the health check.
 function Show-FinalFrame([object[]]$Checks) {
     $run = $script:Run
     $inner = $FrameWidth - 2
@@ -683,7 +595,6 @@ function Show-FinalFrame([object[]]$Checks) {
     if ($failed -gt 0) {
         foreach ($failure in $script:Failures) {
             Write-FrameRow -Left @((Seg '   '), (Seg $Symbol.Fail 'Red'), (Seg (' ' + $failure.Label) 'Red'))
-            # The last two lines: the error code and the reason come last.
             $lines = @(Get-Wrapped (($failure.Message -replace '\s+', ' ').Trim()) ($inner - 10))
             if ($lines.Count -gt 2) { $lines = @(('...' + $lines[-2]), $lines[-1]) }
             foreach ($line in $lines) { Write-FrameRow -Left (Seg ('     ' + $line) 'DarkRed') }
@@ -713,19 +624,11 @@ function Show-FinalFrame([object[]]$Checks) {
     while ([Console]::ReadKey($true).Key -ne 'Enter') { }
 }
 
-# ---------------------------------------------------------------------------
-# Step runner
-# ---------------------------------------------------------------------------
-
 $script:Failures = New-Object System.Collections.Generic.List[object]
 $script:Run = $null
 
-# Marks the running step as skipped, from the step itself or from any helper it calls.
 function Skip([string]$Reason) { $script:StepSkip = $Reason }
 
-# Runs the steps twice: a counting pass that only lists the sections and their steps (Invoke-Step
-# does not run its action), then the real pass, drawn live. The step functions keep every change
-# inside Invoke-Step, so the counting pass changes nothing.
 function Invoke-Run([scriptblock]$Steps) {
     $script:Run = @{ Counting = $true; Sections = (New-Object System.Collections.Generic.List[object]); Current = -1; Done = 0; Label = ''; Started = (Get-Date) }
     & $Steps
@@ -740,7 +643,6 @@ function Invoke-Run([scriptblock]$Steps) {
 function Complete-Section {
     $section = $script:Run.Sections[$script:Run.Current]
     $section.State = 'done'
-    # Steps counted but not run (winget missing, for example) no longer count.
     $section.Total = $section.Done
 }
 
@@ -767,8 +669,6 @@ function Stop-Spinner {
     try { [OwNative.Console]::StopSpinner() } catch { $null = $_ }
 }
 
-# The output of a step is discarded, all streams included, so nothing breaks the frame: no Out-Null
-# needed inside a step. A step that throws is counted as failed and listed at the end; the run goes on.
 function Invoke-Step {
     param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][scriptblock]$Action)
     $stepSection = $script:Run.Sections[$script:Run.Current]
@@ -791,17 +691,11 @@ function Invoke-Step {
     $script:Run.Done++
 }
 
-# Runs Action on every item without stopping at the first failure, then fails once, naming the
-# items that failed (with Label, or the item itself).
 function Invoke-ForEachItem {
     param([object[]]$Items, [scriptblock]$Action, [scriptblock]$Label = { param($Item) "$Item" })
     $failed = @(foreach ($item in $Items) { try { $null = & $Action $item } catch { & $Label $item } })
     if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
 }
-
-# ---------------------------------------------------------------------------
-# Hardware and system detection
-# ---------------------------------------------------------------------------
 
 function Get-GpuVendor([string]$PnpId) {
     if ($PnpId -match 'VEN_10DE') { return 'NVIDIA' }
@@ -817,8 +711,7 @@ function Test-DiscreteGpuName([string]$Name) {
 function Get-SystemInfo {
     $cpu = Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1
     $cs  = Get-CimInstance -ClassName Win32_ComputerSystem
-    # Mobile system type, or a portable chassis (laptop, notebook, 2-in-1, tablet).
-    # Win32_Battery is not used: a USB UPS shows up as a battery.
+    # Not Win32_Battery: a USB UPS shows up as a battery.
     $chassis = @((Get-CimInstance -ClassName Win32_SystemEnclosure -ErrorAction SilentlyContinue).ChassisTypes)
     $isLaptop = ($cs.PCSystemType -eq 2) -or [bool]($chassis | Where-Object { $_ -in 8, 9, 10, 14, 30, 31, 32 })
 
@@ -837,7 +730,6 @@ function Get-SystemInfo {
     $hasLinux = [bool](Get-Partition -ErrorAction SilentlyContinue | Where-Object { $_.GptType -eq '{0FC63DAF-8483-4772-8E79-3D69D8477DE4}' })
 
     [pscustomobject]@{
-        # Every X3D with more than 8 cores has two CCDs (7900X3D to 9950X3D, 7945HX3D, 9955HX3D).
         IsDualCcdX3D = ($cpu.Name -match 'X3D' -and $cpu.NumberOfCores -gt 8)
         Gpus         = $gpus
         IsLaptop     = $isLaptop
@@ -846,12 +738,7 @@ function Get-SystemInfo {
     }
 }
 
-# ---------------------------------------------------------------------------
-# Module state detection
-# ---------------------------------------------------------------------------
-
 function Get-XboxEnabled {
-    # The Game Bar alone does not count: Windows may protect it, or it is kept for dual-CCD X3D CPUs.
     return [bool](Get-AppxPackage -Name 'Microsoft.GamingApp' -ErrorAction SilentlyContinue)
 }
 
@@ -860,7 +747,6 @@ function Get-PrintingEnabled {
     return ($svc -and $svc.StartType -ne 'Disabled')
 }
 
-# The hypervisor also runs for VBS / memory integrity: "enabled" when it runs or when a feature is on.
 function Get-VirtualizationEnabled {
     if ((Get-CimInstance -ClassName Win32_ComputerSystem).HypervisorPresent) { return $true }
     return (Test-FeatureEnabled $VirtualizationDisable)
@@ -871,11 +757,6 @@ function Get-ReturningApps {
     return @($ReturningApps.Keys | Where-Object { $installed -contains $_ })
 }
 
-# ---------------------------------------------------------------------------
-# winget
-# ---------------------------------------------------------------------------
-
-# On a fresh install, winget may only work once App Installer is registered for the user.
 function Assert-Winget {
     if (Get-Command -Name 'winget' -ErrorAction SilentlyContinue) { return }
     Add-AppxPackage -RegisterByFamilyName -MainPackage 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe' -ErrorAction SilentlyContinue
@@ -884,7 +765,6 @@ function Assert-Winget {
     }
 }
 
-# One winget call per package: "install" already detects an installed package.
 $WingetAlreadyInstalled = -1978335135  # 0x8A150061 (with --no-upgrade)
 $WingetNoUpdate         = -1978335189  # 0x8A15002B
 
@@ -896,10 +776,6 @@ function Install-WingetPackage([string]$Id, [string]$Source = 'winget') {
     if ($LASTEXITCODE -ne 0) { return (Skip 'already installed') }
 }
 
-# ---------------------------------------------------------------------------
-# Applications
-# ---------------------------------------------------------------------------
-
 function Set-FirefoxConfig {
     $firefoxDir = Join-Path $env:ProgramFiles 'Mozilla Firefox'
     if (-not (Test-Path -LiteralPath (Join-Path $firefoxDir 'firefox.exe'))) { return (Skip 'Firefox not found') }
@@ -907,8 +783,6 @@ function Set-FirefoxConfig {
         (Test-Path -LiteralPath (Join-Path $firefoxDir 'distribution\extensions\uBlock0@raymondhill.net.xpi'))) { return (Skip 'already done') }
     $utf8 = New-Object System.Text.UTF8Encoding($false)
 
-    # Preferences through AutoConfig instead of enterprise policies: no "managed by your
-    # organization" banner, and these are only defaults the user can still change.
     $prefDir = Join-Path $firefoxDir 'defaults\pref'
     New-Item -Path $prefDir -ItemType Directory -Force | Out-Null
     $autoconfig = 'pref("general.config.filename", "firefox.cfg");' + "`n" + 'pref("general.config.obscure_value", 0);' + "`n"
@@ -920,25 +794,20 @@ defaultPref("datareporting.healthreport.uploadEnabled", false);
 defaultPref("app.shield.optoutstudies.enabled", false);
 defaultPref("browser.newtabpage.activity-stream.feeds.topsites", false);
 defaultPref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
-// Session: reopen the previous tabs
 defaultPref("browser.startup.page", 3);
-// AI features
 defaultPref("browser.ml.chat.enabled", false);
 defaultPref("browser.ml.chat.shortcuts", false);
 defaultPref("browser.ml.linkPreview.enabled", false);
 defaultPref("browser.tabs.groups.smart.enabled", false);
-// Sponsored content
 defaultPref("browser.newtabpage.activity-stream.showSponsored", false);
 defaultPref("browser.newtabpage.activity-stream.showSponsoredTopSites", false);
 defaultPref("browser.urlbar.suggest.quicksuggest.sponsored", false);
-// Extension and feature recommendations, Firefox View
 defaultPref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons", false);
 defaultPref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features", false);
 defaultPref("extensions.htmlaboutaddons.recommendations.enabled", false);
 defaultPref("extensions.getAddons.showPane", false);
 defaultPref("browser.discovery.enabled", false);
 defaultPref("browser.tabs.firefox-view", false);
-// Privacy
 defaultPref("browser.crashReports.unsubmittedCheck.autoSubmit2", false);
 defaultPref("app.normandy.enabled", false);
 defaultPref("datareporting.usage.uploadEnabled", false);
@@ -947,7 +816,6 @@ defaultPref("privacy.globalprivacycontrol.enabled", true);
 '@
     [IO.File]::WriteAllText((Join-Path $firefoxDir 'firefox.cfg'), $cfg, $utf8)
 
-    # uBlock Origin: Firefox installs the extensions of distribution\extensions in every new profile.
     $extDir = Join-Path $firefoxDir 'distribution\extensions'
     $xpi = Join-Path $extDir 'uBlock0@raymondhill.net.xpi'
     if (-not (Test-Path -LiteralPath $xpi)) {
@@ -958,15 +826,11 @@ defaultPref("privacy.globalprivacycontrol.enabled", true);
         Move-Item -LiteralPath $download -Destination $xpi -Force
     }
 
-    # Daily task that reports the default browser to Mozilla.
     Get-ScheduledTask -TaskPath '\Mozilla\' -ErrorAction SilentlyContinue |
         Where-Object { $_.TaskName -like 'Firefox Default Browser Agent*' } | Disable-ScheduledTask | Out-Null
 }
 
 function Add-FirefoxToTaskbar {
-    # Windows 11 has no API to pin apps: apply a taskbar layout once through the
-    # Explorer policy (same mechanism and file as the unattended setup), then unlock it so
-    # the user stays free to change the pins.
     $link = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Firefox.lnk'
     if (-not (Test-Path -LiteralPath $link)) { return (Skip 'Firefox shortcut not found') }
     $xml = @'
@@ -993,11 +857,9 @@ function Add-FirefoxToTaskbar {
     Set-RegValue $key 'StartLayoutFile' $TaskbarXml 'ExpandString'
     Set-RegValue $key 'LockedStartLayout' 1
     Get-Process -Name 'explorer' -ErrorAction SilentlyContinue | Stop-Process -Force
-    # Windows restarts Explorer by itself; start it if it has not after a few seconds.
     $deadline = (Get-Date).AddSeconds(6)
     while ((Get-Date) -lt $deadline -and -not (Get-Process -Name 'explorer' -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
     if (-not (Get-Process -Name 'explorer' -ErrorAction SilentlyContinue)) { Start-Process 'explorer.exe' }
-    # Wait for the taskbar window, then give Explorer time to read the layout before unlocking it.
     $deadline = (Get-Date).AddSeconds(30)
     while ((Get-Date) -lt $deadline) {
         $taskbar = [IntPtr]::Zero
@@ -1015,24 +877,20 @@ function Disable-StartupEntry([string]$Name) {
     Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' $Name $bytes 'Binary'
 }
 
-# Only the applications checked at the first run.
 function Invoke-AppSteps($Selected) {
     if (-not @($AppIds | Where-Object { $Selected.Contains($_) })) { return }
     Start-Section 'Applications'
 
     Invoke-Step 'winget sources' {
         Assert-Winget
-        # On a fresh install the sources are often out of date and installs fail until refreshed.
         try { Invoke-Native -File 'winget' -Arguments @('source', 'update', '--disable-interactivity') }
         catch {
             Invoke-Native -File 'winget' -Arguments @('source', 'reset', '--force', '--disable-interactivity')
             Invoke-Native -File 'winget' -Arguments @('source', 'update', '--disable-interactivity')
         }
     }
-    # Without winget, every install below would only repeat the failure above.
     if (-not (Get-Command -Name 'winget' -ErrorAction SilentlyContinue)) { return }
 
-    # Firefox is set up only when chosen: a Firefox the user installs alone stays as it is.
     if ($Selected.Firefox) {
         $script:FirefoxInstalledNow = $false
         Invoke-Step 'Firefox' {
@@ -1040,7 +898,6 @@ function Invoke-AppSteps($Selected) {
             $script:FirefoxInstalledNow = -not $script:StepSkip
         }
         Invoke-Step 'Firefox: uBlock Origin and settings' { Set-FirefoxConfig }
-        # Only right after the install: the user may have changed the pins since.
         if ($script:FirefoxInstalledNow) { Invoke-Step 'Firefox: pin to the taskbar' { Add-FirefoxToTaskbar } }
     }
     if ($Selected.Vlc) {
@@ -1058,10 +915,6 @@ function Invoke-AppSteps($Selected) {
         Invoke-Step 'Discord: no launch at startup' { Disable-StartupEntry 'Discord' }
     }
 }
-
-# ---------------------------------------------------------------------------
-# Optimizations (no rollback)
-# ---------------------------------------------------------------------------
 
 function Invoke-PrivacySteps {
     Start-Section 'Privacy and telemetry'
@@ -1144,9 +997,7 @@ function Invoke-SystemSteps($Info) {
         Invoke-Native -File 'powercfg.exe' -Arguments @('/hibernate', 'off')
     }
 
-    # LetAppsRunInBackground_ForceAllowTheseApps also tells Get-ChangeItems that the script already ran.
     Invoke-Step 'Background apps' {
-        # Xbox app and Game Bar keep working in the background when they are installed.
         $allowed = @('Microsoft.SecHealthUI_8wekyb3d8bbwe')
         foreach ($name in 'Microsoft.GamingApp', 'Microsoft.XboxGamingOverlay') {
             if (Get-AppxPackage -Name $name -ErrorAction SilentlyContinue) { $allowed += "${name}_8wekyb3d8bbwe" }
@@ -1164,7 +1015,6 @@ function Invoke-SystemSteps($Info) {
     }
 
     Invoke-Step 'Mobile devices (Cross Device Experience Host)' {
-        # Background process at every logon; Phone Link is already removed by the USB key.
         Uninstall-StoreApp @('MicrosoftWindows.CrossDevice')
     }
 
@@ -1203,8 +1053,6 @@ function Invoke-PowerSteps($Info) {
     }
 
     if ($Info.IsDualCcdX3D) {
-        # The AMD driver parks the CCD without 3D V-Cache during games: keep the plain Balanced
-        # plan, without the "Best performance" mode whose effect on core parking is not documented.
         Invoke-Step 'Balanced plan (dual-CCD X3D: core parking kept)' {
             Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced)
         }
@@ -1355,7 +1203,6 @@ function Get-NotificationsEnabled {
 function Set-Notifications([bool]$Enabled) {
     $label = if ($Enabled) { 'Notifications on' } else { 'Notifications off' }
     Invoke-Step $label {
-        # Same switch as Settings > System > Notifications.
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' 'ToastEnabled' ([int]$Enabled)
     }
 }
@@ -1369,10 +1216,6 @@ function Invoke-NotificationSteps {
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowSyncProviderNotifications' 0
     }
 }
-
-# ---------------------------------------------------------------------------
-# Changes checked in the list
-# ---------------------------------------------------------------------------
 
 function Disable-Xbox([bool]$KeepGameBar = $false) {
     Invoke-Step 'Remove Xbox apps' {
@@ -1398,7 +1241,6 @@ function Enable-Xbox {
 
 function Disable-Printing {
     Invoke-Step 'Print Spooler' { Set-ServiceStartup -Name 'Spooler' -Startup Disabled -Stop }
-    # Configures IPP printers; keeps running once started even with the spooler disabled.
     Invoke-Step 'Printer configuration service' { Set-ServiceStartup -Name 'PrintDeviceConfigurationService' -Startup Disabled -Stop }
     Invoke-Step 'PDF and XPS virtual printers' { Set-Features $PrintingFeatures $false }
 }
@@ -1417,7 +1259,6 @@ function Disable-Virtualization {
 }
 
 function Enable-Virtualization {
-    # Hyper-V and Sandbox (Pro editions) are not turned back on: Windows features, if needed.
     Invoke-Step 'WSL and virtualization platforms' { Set-Features $VirtualizationEnable $true }
     Invoke-Step 'Hypervisor at boot' {
         Invoke-Native -File 'bcdedit.exe' -Arguments @('/set', 'hypervisorlaunchtype', 'auto')
@@ -1428,10 +1269,6 @@ function Remove-ReturningApps {
     Invoke-Step 'Remove apps installed again' { Uninstall-StoreApp @(Get-ReturningApps) }
 }
 
-# The list shows what is used: checked means installed or turned on. The first run (background
-# apps policy not set yet) starts with nothing checked, later runs start from the current state.
-# OnId / OffId: action when the line is checked / unchecked while the state is the opposite, with
-# its text (OnText / OffText) for the summary shown on START.
 function Get-ChangeItems {
     $firstRun = $null -eq (Get-RegValue $AppPrivacyKey 'LetAppsRunInBackground_ForceAllowTheseApps')
     $items = New-Object System.Collections.Generic.List[object]
@@ -1441,8 +1278,6 @@ function Get-ChangeItems {
                       OnId = $OnId; OnText = $OnText; OffId = $OffId; OffText = $OffText })
     }
 
-    # Applications: first run only, and never uninstalled (uninstalling Steam deletes the games in its
-    # folder). Current is $false: the install step skips an application that is already there.
     if ($firstRun) {
         & $add 'Firefox + uBlock Origin' 'With the uBlock Origin ad blocker, without telemetry or sponsored content. Pinned to the taskbar.' $false 'Firefox' 'install Firefox' $null $null
         & $add 'VLC' 'Plays any video or audio file.' $false 'Vlc' 'install VLC' $null $null
@@ -1455,7 +1290,6 @@ function Get-ChangeItems {
     & $add 'WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators. Unchecked: disabled.' (Get-VirtualizationEnabled) 'VirtOn' 'enable WSL' 'VirtOff' 'disable WSL'
     & $add 'Notifications' 'Discord, Steam, Windows Update, Windows Security. Unchecked: no notifications at all.' (Get-NotificationsEnabled) 'NotificationsOn' 'turn on notifications' 'NotificationsOff' 'turn off all notifications'
 
-    # Only while they are back: they can be removed, not installed.
     $returning = @(Get-ReturningApps)
     if ($returning.Count -gt 0) {
         $names = ($returning | ForEach-Object { $ReturningApps[$_] }) -join ', '
@@ -1464,8 +1298,6 @@ function Get-ChangeItems {
     return $items.ToArray()
 }
 
-# Actions of the list: only the lines that differ from the current state, as Id = text, in the
-# order of the list. The text is never empty, so $selected.XboxOff can be tested as a flag.
 function Get-SelectedChanges($Items) {
     $selected = [ordered]@{}
     foreach ($item in $Items) {
@@ -1489,10 +1321,6 @@ function Invoke-ChangeSteps($Selected, [bool]$KeepGameBar) {
     if ($Selected.NotificationsOn) { Set-Notifications $true }
     if ($Selected.ReturningApps) { Remove-ReturningApps }
 }
-
-# ---------------------------------------------------------------------------
-# Health check (read only)
-# ---------------------------------------------------------------------------
 
 $displayHelperLoaded = $false
 function Initialize-DisplayHelper {
@@ -1573,7 +1401,6 @@ public static class OwDisplayInfo
     $script:displayHelperLoaded = $true
 }
 
-# Level: ok, warn or info. Shown by Show-FinalFrame.
 function Add-Check([string]$Level, [string]$Message, [string]$Advice) {
     $script:Checks.Add([pscustomobject]@{ Level = $Level; Message = $Message; Advice = $Advice })
 }
@@ -1581,7 +1408,6 @@ function Add-Check([string]$Level, [string]$Message, [string]$Advice) {
 function Get-HealthChecks($Info) {
     $script:Checks = New-Object System.Collections.Generic.List[object]
 
-    # VBS
     $dg = Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' -ClassName Win32_DeviceGuard -ErrorAction SilentlyContinue
     if ($dg -and $dg.VirtualizationBasedSecurityStatus -eq 2) {
         Add-Check 'warn' 'VBS / memory integrity still running' 'Windows Security > Device security > Core isolation: turn off, then restart'
@@ -1594,8 +1420,6 @@ function Get-HealthChecks($Info) {
         return $script:Checks.ToArray()
     }
 
-    # Secure Boot: required by anti-cheats (Vanguard: error VAN 9003). The 2011 certificate that
-    # signs the Windows boot manager expires in October 2026; Windows Update installs the 2023 ones.
     try {
         if (Confirm-SecureBootUEFI) {
             $db = [Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI -Name db).Bytes)
@@ -1609,15 +1433,12 @@ function Get-HealthChecks($Info) {
     }
 
     if (-not $Info.IsLaptop) {
-        # RAM speed: without its EXPO / XMP profile a kit runs at the base JEDEC speed, and a BIOS
-        # update or a CMOS reset silently goes back to it. The rated speed is printed on the kit.
         $modules = @(Get-CimInstance -ClassName Win32_PhysicalMemory)
         if ($modules.Count -gt 0) {
             $speed = [int]($modules | Measure-Object -Property ConfiguredClockSpeed -Maximum).Maximum
             $parts = @($modules | ForEach-Object { ([string]$_.PartNumber).Trim() } | Where-Object { $_ } | Select-Object -Unique)
             $label = 'RAM at {0} MT/s' -f $speed
             if ($parts.Count -gt 0) { $label += ' (kit: {0})' -f ($parts -join ', ') }
-            # Speed is the module's JEDEC (base) speed: running above it means EXPO / XMP is active.
             $jedec = [int]($modules | Measure-Object -Property Speed -Minimum).Minimum
             if ($jedec -gt 0 -and $speed -gt $jedec) {
                 Add-Check 'ok' ($label + ', EXPO/XMP active')
@@ -1626,7 +1447,6 @@ function Get-HealthChecks($Info) {
             }
         }
 
-        # Integrated graphics next to a graphics card: it reserves part of the RAM for itself.
         $integrated = @($Info.Gpus | Where-Object { -not $_.IsDiscrete -and -not $_.IsBasic -and ($_.Vendor -eq 'AMD' -or $_.Vendor -eq 'Intel') })
         if ($integrated.Count -gt 0 -and @($Info.Gpus | Where-Object { $_.IsDiscrete }).Count -gt 0) {
             $installed = ($modules | Measure-Object -Property Capacity -Sum).Sum
@@ -1636,7 +1456,6 @@ function Get-HealthChecks($Info) {
         }
     }
 
-    # Graphics driver
     foreach ($gpu in $Info.Gpus) {
         if ($gpu.IsBasic) {
             Add-Check 'warn' "Microsoft basic display driver ($($gpu.Name))" 'Install the driver with NVIDIA App or AMD Adrenalin'
@@ -1645,7 +1464,6 @@ function Get-HealthChecks($Info) {
         }
     }
 
-    # Refresh rate
     try {
         Initialize-DisplayHelper
         foreach ($d in [OwDisplayInfo]::Get()) {
@@ -1662,12 +1480,6 @@ function Get-HealthChecks($Info) {
     return $script:Checks.ToArray()
 }
 
-# ---------------------------------------------------------------------------
-# Flows
-# ---------------------------------------------------------------------------
-
-# Same run every time: applications installed if missing, all optimizations applied again,
-# and the lines of the list that differ from the current state.
 function Start-Run {
     if (Test-RebootPending) { Wait-Exit 'A restart is pending (Windows Update). Restart the PC, then run the script again.' }
 
@@ -1694,7 +1506,6 @@ function Start-Run {
         Invoke-EdgeSteps
         Invoke-InterfaceSteps
         Invoke-NotificationSteps
-        # Last, so the Store does not update App Installer while winget is installing apps.
         Start-Section 'Microsoft Store'
         Invoke-Step 'Store app updates (in the background)' { Start-StoreUpdates }
     }
@@ -1704,9 +1515,5 @@ function Start-Run {
     Show-FinalFrame @(Get-HealthChecks $info)
     exit 0
 }
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 Start-Run
