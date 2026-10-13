@@ -41,7 +41,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 ## 4. Lancer le script
 
 1. Ouvrir la clé USB, double-cliquer sur `setup.cmd`, puis accepter la demande d'autorisation.
-2. Cocher ce que vous utilisez avec <kbd>Espace</kbd> ou <kbd>Entrée</kbd>, puis descendre sur **START** et appuyer sur <kbd>Entrée</kbd>. Ce qui n'est pas coché est retiré ou désactivé : Xbox est désinstallé, l'impression, WSL et les notifications sont coupés. Les applications (Firefox, VLC, Steam, Discord) ne sont proposées qu'au premier lancement, et jamais désinstallées. Sur **START**, le script résume ce qu'il va changer. <kbd>Échap</kbd> quitte sans rien faire.
+2. Cocher ce que vous utilisez avec <kbd>Espace</kbd> ou <kbd>Entrée</kbd>, puis descendre sur **START** et appuyer sur <kbd>Entrée</kbd>. Ce qui n'est pas coché est retiré ou désactivé : Xbox est désinstallé, l'impression, WSL et les notifications sont coupés. Les applications (Firefox, VLC, Steam, Discord) sont proposées tant qu'elles ne sont pas installées, et ne sont jamais désinstallées. Sur **START**, le script résume ce qu'il va changer. <kbd>Échap</kbd> quitte sans rien faire.
 
 ```
 ╭─ Windows Optimization ─────────────────────────────────────────────────────╮
@@ -76,12 +76,12 @@ Au premier lancement, rien n'est coché. Aux lancements suivants, les cases repr
 <details>
 <summary>Ce que fait le script</summary>
 
-- **Applications** (premier lancement, au choix) : Firefox avec uBlock Origin, VLC, Steam et Discord. Steam et Discord ne se lancent pas au démarrage de Windows.
+- **Applications** (au choix, tant qu'elles ne sont pas installées) : Firefox avec uBlock Origin, VLC, Steam et Discord. Steam et Discord ne se lancent pas au démarrage de Windows.
 - **Confidentialité** : télémétrie, publicité ciblée, rapport d'erreurs, Copilot, Recall et résultats web de la recherche coupés.
 - **Système** : services inutiles arrêtés, applications en arrière-plan coupées, hibernation désactivée.
 - **Latence** (PC fixe) : mode d'alimentation « Meilleures performances », économies d'énergie désactivées.
 - **Jeu** : optimisations pour les jeux en fenêtre activées, enregistrement en arrière-plan coupé.
-- **Au choix** : Xbox, impression, WSL / virtualisation et notifications restent actifs si leur ligne est cochée, et sont retirés ou désactivés sinon. Les applications retirées par la clé USB et réinstallées depuis par Windows (Outlook, Copilot, Teams…) apparaissent aussi dans la liste : décochées, elles sont supprimées.
+- **Au choix** : Xbox, impression, WSL / virtualisation et notifications restent actifs si leur ligne est cochée, et sont retirés ou désactivés sinon. Sur un processeur X3D à deux CCD (7950X3D, 9950X3D…), retirer Xbox garde la Game Bar, dont le processeur a besoin pour les jeux. Les applications retirées par la clé USB et réinstallées depuis par Windows (Outlook, Copilot, Teams…) apparaissent aussi dans la liste : décochées, elles sont supprimées.
 
 </details>
 

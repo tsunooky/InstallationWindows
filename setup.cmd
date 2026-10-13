@@ -11,6 +11,7 @@ if errorlevel 1 pause
 exit /b
 #>
 
+$AppTitle      = 'Windows Optimization'
 $MinBuild      = 26100
 $TaskbarXml    = Join-Path $env:SystemRoot 'Setup\Scripts\TaskbarLayoutModification.xml'
 $AppPrivacyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy'
@@ -20,10 +21,15 @@ $OverlayBestPerf       = 'ded574b5-45a0-4f42-8737-46345c09c238'
 $NullPersistentHandler = '{098f2470-bae0-11cd-b579-08002b30bfeb}'
 $LinuxPartitionGuid    = '{0FC63DAF-8483-4772-8E79-3D69D8477DE4}'
 
-$MobilePcSystemType   = 2
-$PortableChassisTypes = @(8, 9, 10, 14, 30, 31, 32)
-$NdisMediumEthernet   = 14
-$VbsRunning           = 2
+$PowerPcieAspm            = @('SUB_PCIEXPRESS', 'ASPM')
+$PowerUsbSelectiveSuspend = @('2a737441-1930-4402-8d77-b2bebba308a3', '48e6b7a6-50f5-4782-a5d4-53bb8f07e226')
+$PowerWifiSaving          = @('19cbb8fa-5279-450e-9fac-8a3d5fedd0c1', '12bbebe6-58d6-4636-95bb-3217ef867c1a')
+
+$MobilePcSystemType     = 2
+$PortableChassisTypes   = @(8, 9, 10, 14, 30, 31, 32)
+$NdisMediumEthernet     = 14
+$VbsRunning             = 2
+$IntegratedGpuVendorIds = 'VEN_(1002|8086)'
 
 $ServicesToDisable = @(
     'DiagTrack',
@@ -32,10 +38,13 @@ $ServicesToDisable = @(
     'LanmanServer'
 )
 
+$XboxAppPackage = 'Microsoft.GamingApp'
+$GameBarPackage = 'Microsoft.XboxGamingOverlay'
+
 $XboxPackages = @(
-    'Microsoft.GamingApp',
+    $XboxAppPackage,
     'Microsoft.GamingServices',
-    'Microsoft.XboxGamingOverlay',
+    $GameBarPackage,
     'Microsoft.XboxGameOverlay',
     'Microsoft.XboxSpeechToTextOverlay',
     'Microsoft.Edge.GameAssist'
@@ -106,60 +115,137 @@ if (-not (Test-Admin)) {
     exit 0
 }
 
-$Host.UI.RawUI.WindowTitle = 'Windows Optimization'
+$Host.UI.RawUI.WindowTitle = $AppTitle
 $ProgressPreference = 'SilentlyContinue'
 
-$script:SpinnerReady = $false
+$script:NativeReady = $false
 try {
-    Add-Type -Namespace OwNative -Name Console -MemberDefinition @'
-public const int StdInput = -10, StdOutput = -11;
-public const uint QuickEditMode = 0x40, ExtendedFlags = 0x80;
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
-[DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GetStdHandle(int nStdHandle);
-[DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
-[DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
-[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool WriteConsoleOutputCharacter(IntPtr hConsoleOutput, string lpCharacter, uint nLength, uint dwWriteCoord, out uint lpNumberOfCharsWritten);
+namespace OwNative {
 
-static readonly object spinGate = new object();
-static System.Threading.Timer spinTimer;
-static string[] spinFrames;
-static int spinX, spinY, spinIndex, clockRight, clockY;
-static DateTime clockStart;
+public static class Console {
+    public const int StdInput = -10, StdOutput = -11;
+    public const uint QuickEditMode = 0x40, ExtendedFlags = 0x80;
 
-static void Put(string text, int x, int y) {
-    uint written;
-    WriteConsoleOutputCharacter(GetStdHandle(StdOutput), text, (uint)text.Length, (uint)((y << 16) | x), out written);
-}
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GetStdHandle(int nStdHandle);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool WriteConsoleOutputCharacter(IntPtr hConsoleOutput, string lpCharacter, uint nLength, uint dwWriteCoord, out uint lpNumberOfCharsWritten);
 
-static void SpinTick(object state) {
-    lock (spinGate) {
-        if (spinTimer == null) return;
-        try {
-            spinIndex = (spinIndex + 1) % spinFrames.Length;
-            Put(spinFrames[spinIndex], spinX, spinY);
-            TimeSpan t = DateTime.Now - clockStart;
-            string clock = string.Format("{0}:{1:00}", (int)t.TotalMinutes, t.Seconds);
-            Put(clock, clockRight - clock.Length, clockY);
-        } catch { }
+    static readonly object spinGate = new object();
+    static System.Threading.Timer spinTimer;
+    static string[] spinFrames;
+    static int spinX, spinY, spinIndex, clockRight, clockY;
+    static DateTime clockStart;
+
+    static void Put(string text, int x, int y) {
+        uint written;
+        WriteConsoleOutputCharacter(GetStdHandle(StdOutput), text, (uint)text.Length, (uint)((y << 16) | x), out written);
+    }
+
+    static void SpinTick(object state) {
+        lock (spinGate) {
+            if (spinTimer == null) return;
+            try {
+                spinIndex = (spinIndex + 1) % spinFrames.Length;
+                Put(spinFrames[spinIndex], spinX, spinY);
+                TimeSpan t = DateTime.Now - clockStart;
+                string clock = string.Format("{0}:{1:00}", (int)t.TotalMinutes, t.Seconds);
+                Put(clock, clockRight - clock.Length, clockY);
+            } catch { }
+        }
+    }
+
+    public static void StartSpinner(string[] frames, int x, int y, int right, int top, DateTime start) {
+        lock (spinGate) {
+            spinFrames = frames; spinX = x; spinY = y; spinIndex = 0;
+            clockRight = right; clockY = top; clockStart = start;
+            spinTimer = new System.Threading.Timer(SpinTick, null, 150, 150);
+        }
+    }
+
+    public static void StopSpinner() {
+        lock (spinGate) {
+            if (spinTimer != null) { spinTimer.Dispose(); spinTimer = null; }
+        }
     }
 }
 
-public static void StartSpinner(string[] frames, int x, int y, int right, int top, DateTime start) {
-    lock (spinGate) {
-        spinFrames = frames; spinX = x; spinY = y; spinIndex = 0;
-        clockRight = right; clockY = top; clockStart = start;
-        spinTimer = new System.Threading.Timer(SpinTick, null, 150, 150);
+public static class Display {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DISPLAY_DEVICE
+    {
+        public int cb;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
+        public int StateFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DEVMODE
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+        public short dmSpecVersion; public short dmDriverVersion; public short dmSize; public short dmDriverExtra;
+        public int dmFields; public int dmPositionX; public int dmPositionY;
+        public int dmDisplayOrientation; public int dmDisplayFixedOutput;
+        public short dmColor; public short dmDuplex; public short dmYResolution; public short dmTTOption; public short dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+        public short dmLogPixels; public int dmBitsPerPel; public int dmPelsWidth; public int dmPelsHeight;
+        public int dmDisplayFlags; public int dmDisplayFrequency; public int dmICMMethod; public int dmICMIntent;
+        public int dmMediaType; public int dmDitherType; public int dmReserved1; public int dmReserved2;
+        public int dmPanningWidth; public int dmPanningHeight;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    static extern bool EnumDisplayDevices(string lpDevice, uint iDevNum, ref DISPLAY_DEVICE lpDisplayDevice, uint dwFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    static extern bool EnumDisplaySettings(string deviceName, int modeNum, ref DEVMODE devMode);
+
+    public class Result
+    {
+        public string Adapter; public int Width; public int Height; public int CurrentHz; public int MaxHz;
+    }
+
+    public static List<Result> Get()
+    {
+        var list = new List<Result>();
+        for (uint i = 0; ; i++)
+        {
+            var d = new DISPLAY_DEVICE();
+            d.cb = Marshal.SizeOf(d);
+            if (!EnumDisplayDevices(null, i, ref d, 0)) break;
+            if ((d.StateFlags & 1) == 0) continue; // not attached to the desktop
+            var cur = new DEVMODE();
+            cur.dmSize = (short)Marshal.SizeOf(cur);
+            if (!EnumDisplaySettings(d.DeviceName, -1, ref cur)) continue;
+            int max = cur.dmDisplayFrequency;
+            var m = new DEVMODE();
+            m.dmSize = (short)Marshal.SizeOf(m);
+            for (int k = 0; EnumDisplaySettings(d.DeviceName, k, ref m); k++)
+            {
+                if (m.dmPelsWidth == cur.dmPelsWidth && m.dmPelsHeight == cur.dmPelsHeight && m.dmDisplayFrequency > max)
+                    max = m.dmDisplayFrequency;
+            }
+            var r = new Result();
+            r.Adapter = d.DeviceString; r.Width = cur.dmPelsWidth; r.Height = cur.dmPelsHeight;
+            r.CurrentHz = cur.dmDisplayFrequency; r.MaxHz = max;
+            list.Add(r);
+        }
+        return list;
     }
 }
 
-public static void StopSpinner() {
-    lock (spinGate) {
-        if (spinTimer != null) { spinTimer.Dispose(); spinTimer = null; }
-    }
 }
 '@
-    $script:SpinnerReady = $true
+    $script:NativeReady = $true
     $stdIn = [OwNative.Console]::GetStdHandle([OwNative.Console]::StdInput)
     $mode = [uint32]0
     if ([OwNative.Console]::GetConsoleMode($stdIn, [ref]$mode)) {
@@ -291,6 +377,11 @@ function Set-Features([string[]]$Names, [bool]$Enabled) {
     }
 }
 
+function Disable-PowerSetting([string[]]$Setting, [switch]$AcOnly) {
+    Invoke-Native -File 'powercfg.exe' -Arguments (@('/setacvalueindex', $SchemeBalanced) + $Setting + '0') | Out-Null
+    if (-not $AcOnly) { Invoke-Native -File 'powercfg.exe' -Arguments (@('/setdcvalueindex', $SchemeBalanced) + $Setting + '0') | Out-Null }
+}
+
 function Test-RebootPending {
     $keys = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending',
@@ -335,10 +426,9 @@ function Format-Elapsed([datetime]$Since) {
     return ('{0}:{1:00}' -f [int][math]::Floor($t.TotalMinutes), $t.Seconds)
 }
 
-function Get-Truncated([string]$Text, [int]$Max, [switch]$Tail) {
+function Get-TextTail([string]$Text, [int]$Max) {
     if ($Text.Length -le $Max) { return $Text }
-    if ($Tail) { return '...' + $Text.Substring($Text.Length - ($Max - 3)) }
-    return $Text.Substring(0, $Max - 3) + '...'
+    return '...' + $Text.Substring($Text.Length - ($Max - 3))
 }
 
 function Get-Wrapped([string]$Text, [int]$Width) {
@@ -431,7 +521,7 @@ function Show-Loading {
     Wait-WindowSize
     try { [Console]::CursorVisible = $false } catch { $null = $_ }
     Clear-Host
-    Write-FrameLine $BoxChar.TL $BoxChar.TR 'Windows Optimization'
+    Write-FrameLine $BoxChar.TL $BoxChar.TR $AppTitle
     Write-FrameRow
     Write-FrameRow -Left (Seg '  Reading the current state...' 'DarkGray')
     Write-FrameRow
@@ -445,7 +535,7 @@ function Join-Words([string[]]$Words) {
 
 function Show-SelectionFrame([object[]]$Items, [int]$Focus) {
     [Console]::SetCursorPosition(0, 0)
-    Write-FrameLine $BoxChar.TL $BoxChar.TR 'Windows Optimization'
+    Write-FrameLine $BoxChar.TL $BoxChar.TR $AppTitle
     Write-FrameRow
     Write-FrameRow -Left (Seg '  CHECK WHAT YOU USE' 'White')
     for ($i = 0; $i -lt $Items.Count; $i++) {
@@ -509,46 +599,22 @@ function Read-Selection([object[]]$Items) {
     }
 }
 
-function Read-FrameYesNo([string]$Question, [string[]]$Lines, [bool]$Default = $true) {
-    $yes = $Default
-    Clear-Host
-    Clear-KeyBuffer
-    while ($true) {
-        [Console]::SetCursorPosition(0, 0)
-        Write-FrameLine $BoxChar.TL $BoxChar.TR 'Windows Optimization'
-        Write-FrameRow
-        Write-FrameRow -Left (Seg ('  ' + $Question) 'White')
-        Write-FrameRow
-        foreach ($line in $Lines) { Write-FrameRow -Left (Seg ('  ' + $line) 'Gray') }
-        Write-FrameRow
-        $buttonFocus = 1
-        if ($yes) { $buttonFocus = 0 }
-        Write-Button '    ' @('  YES  ', '  NO   ') $buttonFocus
-        Write-FrameRow
-        Write-FrameLine $BoxChar.LT $BoxChar.RT
-        Write-KeyHelp @('Left/Right', 'choose', 'Enter', 'confirm')
-        Write-FrameLine $BoxChar.BL $BoxChar.BR
-        $key = [Console]::ReadKey($true).Key
-        if ($key -eq 'LeftArrow' -or $key -eq 'RightArrow' -or $key -eq 'Tab') { $yes = -not $yes }
-        elseif ($key -eq 'Enter') { return $yes }
-    }
-}
-
 function Show-RunFrame {
     $run = $script:Run
     [Console]::SetCursorPosition(0, 0)
-    Write-FrameLine $BoxChar.TL $BoxChar.TR 'Windows Optimization' (Format-Elapsed $run.Started)
+    Write-FrameLine $BoxChar.TL $BoxChar.TR $AppTitle (Format-Elapsed $run.Started)
     Write-FrameRow
     $total = 0
-    foreach ($section in $run.Sections) {
-        $sectionTotal = [math]::Max($section.Total, $section.Done)
-        $total += $sectionTotal
-        $count = '{0}/{1}' -f $section.Done, $sectionTotal
+    for ($i = 0; $i -lt $run.Sections.Count; $i++) {
+        $section = $run.Sections[$i]
+        $total += $section.Total
+        $count = '{0}/{1}' -f $section.Done, $section.Total
         $right = @()
-        if ($section.State -eq 'todo') {
+        if ($i -gt $run.Current) {
             $mark = Seg $Symbol.Todo 'DarkGray'
             $name = Seg $section.Name 'DarkGray'
-        } elseif ($section.State -eq 'run') {
+        } elseif ($i -eq $run.Current) {
+            $run.SpinnerTop = [Console]::CursorTop
             $mark = Seg $Spinner[0] 'Cyan'
             $name = Seg $section.Name 'White'
             $right = @(Seg $count 'Gray')
@@ -566,7 +632,7 @@ function Show-RunFrame {
     Write-FrameRow
     $barWidth = 56
     $filled = 0
-    if ($total -gt 0) { $filled = [int][math]::Floor($barWidth * [math]::Min($run.Done, $total) / $total) }
+    if ($total -gt 0) { $filled = [int][math]::Floor($barWidth * $run.Done / $total) }
     Write-FrameRow -Left @((Seg '   '), (Seg ($Symbol.Full * $filled) 'Cyan'), (Seg ($Symbol.Light * ($barWidth - $filled)) 'DarkGray'), (Seg ('  {0}/{1}' -f $run.Done, $total) 'Gray'))
     Write-FrameRow -Left (Seg ('   ' + $run.Label) 'DarkGray')
     Write-FrameRow
@@ -577,7 +643,7 @@ function Show-RunFrame {
         $failure = $script:Failures[0]
         $message = ($failure.Message -replace '\s+', ' ').Trim()
         $room = $FrameWidth - 2 - 6 - $failure.Label.Length - 2
-        Write-FrameRow -Left @((Seg '   '), (Seg $Symbol.Fail 'Red'), (Seg (' ' + $failure.Label + ': ') 'Red'), (Seg (Get-Truncated $message $room -Tail) 'DarkRed'))
+        Write-FrameRow -Left @((Seg '   '), (Seg $Symbol.Fail 'Red'), (Seg (' ' + $failure.Label + ': ') 'Red'), (Seg (Get-TextTail $message $room) 'DarkRed'))
     } else {
         $labels = @($script:Failures | ForEach-Object { $_.Label })
         Write-FrameRow -Left @((Seg '   '), (Seg $Symbol.Fail 'Red'), (Seg (' {0} problems: {1}' -f $labels.Count, ($labels -join ', ')) 'Red'))
@@ -593,7 +659,7 @@ function Show-FinalFrame([object[]]$Checks) {
     foreach ($section in $run.Sections) { $ok += $section.Ok; $skipped += $section.Skipped }
     $failed = $script:Failures.Count
     Clear-Host
-    Write-FrameLine $BoxChar.TL $BoxChar.TR 'Windows Optimization' ('done in ' + (Format-Elapsed $run.Started))
+    Write-FrameLine $BoxChar.TL $BoxChar.TR $AppTitle ('done in ' + (Format-Elapsed $run.Started))
     Write-FrameRow
     $headline = Seg 'DONE' 'Green'
     if ($failed -eq 1) { $headline = Seg 'DONE, 1 PROBLEM' 'Red' }
@@ -607,7 +673,7 @@ function Show-FinalFrame([object[]]$Checks) {
             if ($lines.Count -gt 2) { $lines = @(('...' + $lines[-2]), $lines[-1]) }
             foreach ($line in $lines) { Write-FrameRow -Left (Seg ('     ' + $line) 'DarkRed') }
         }
-        Write-FrameRow -Left (Seg '     Failed steps are tried again at the next run.' 'DarkGray')
+        Write-FrameRow -Left (Seg '     Run the script again to retry them.' 'DarkGray')
         Write-FrameRow
     }
     Write-FrameRow -Left (Seg '   HEALTH CHECK' 'DarkGray')
@@ -638,42 +704,28 @@ $script:Run = $null
 function Skip([string]$Reason) { $script:StepSkip = $Reason }
 
 function Invoke-Run([scriptblock]$Steps) {
-    $script:Run = @{ Counting = $true; Sections = (New-Object System.Collections.Generic.List[object]); Current = -1; Done = 0; Label = ''; Started = (Get-Date) }
+    $script:Run = @{ Counting = $true; Sections = (New-Object System.Collections.Generic.List[object]); Current = -1; Done = 0; Label = ''; Started = (Get-Date); SpinnerTop = 0 }
     & $Steps
     $script:Run.Counting = $false
     $script:Run.Current = -1
     $script:Run.Started = Get-Date
     Clear-Host
     & $Steps
-    if ($script:Run.Current -ge 0) { Complete-Section }
-}
-
-function Complete-Section {
-    $section = $script:Run.Sections[$script:Run.Current]
-    $section.State = 'done'
-    $section.Total = $section.Done
+    $script:Run.Current = $script:Run.Sections.Count
 }
 
 function Start-Section([string]$Title) {
-    $run = $script:Run
-    if ($run.Current -ge 0 -and -not $run.Counting) { Complete-Section }
-    $index = -1
-    for ($i = 0; $i -lt $run.Sections.Count; $i++) { if ($run.Sections[$i].Name -eq $Title) { $index = $i } }
-    if ($index -lt 0) {
-        $run.Sections.Add(@{ Name = $Title; Total = 0; Done = 0; Ok = 0; Skipped = 0; Failed = 0; State = 'todo' })
-        $index = $run.Sections.Count - 1
-    }
-    $run.Current = $index
-    if (-not $run.Counting) { $run.Sections[$index].State = 'run' }
+    if ($script:Run.Counting) { $script:Run.Sections.Add(@{ Name = $Title; Total = 0; Done = 0; Ok = 0; Skipped = 0; Failed = 0 }) }
+    $script:Run.Current++
 }
 
 function Start-Spinner {
-    if (-not $script:SpinnerReady) { return }
-    try { [OwNative.Console]::StartSpinner($Spinner, 4, 2 + $script:Run.Current, $FrameWidth - 3, 0, $script:Run.Started) } catch { $null = $_ }
+    if (-not $script:NativeReady) { return }
+    try { [OwNative.Console]::StartSpinner($Spinner, 4, $script:Run.SpinnerTop, $FrameWidth - 3, 0, $script:Run.Started) } catch { $null = $_ }
 }
 
 function Stop-Spinner {
-    if (-not $script:SpinnerReady) { return }
+    if (-not $script:NativeReady) { return }
     try { [OwNative.Console]::StopSpinner() } catch { $null = $_ }
 }
 
@@ -705,17 +757,6 @@ function Invoke-ForEachItem {
     if ($failed.Count -gt 0) { throw ('not changed: ' + ($failed -join ', ')) }
 }
 
-function Get-GpuVendor([string]$PnpId) {
-    if ($PnpId -match 'VEN_10DE') { return 'NVIDIA' }
-    if ($PnpId -match 'VEN_1002') { return 'AMD' }
-    if ($PnpId -match 'VEN_8086') { return 'Intel' }
-    return 'Other'
-}
-
-function Test-DiscreteGpuName([string]$Name) {
-    return ($Name -match 'GeForce|RTX|GTX|Quadro|Radeon RX|Radeon (AI )?Pro|Radeon VII')
-}
-
 function Get-SystemInfo {
     $cpu = Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1
     $cs  = Get-CimInstance -ClassName Win32_ComputerSystem
@@ -724,11 +765,13 @@ function Get-SystemInfo {
     $isLaptop = ($cs.PCSystemType -eq $MobilePcSystemType) -or [bool]($chassis | Where-Object { $_ -in $PortableChassisTypes })
 
     $gpus = @(Get-CimInstance -ClassName Win32_VideoController | ForEach-Object {
+        $isDiscrete = $_.Name -match 'GeForce|RTX|GTX|Quadro|Radeon RX|Radeon (AI )?Pro|Radeon VII'
+        $isBasic = $_.PNPDeviceID -match 'BasicDisplay' -or $_.Name -match 'Basic Display'
         [pscustomobject]@{
-            Name       = $_.Name
-            Vendor     = Get-GpuVendor $_.PNPDeviceID
-            IsDiscrete = Test-DiscreteGpuName $_.Name
-            IsBasic    = ($_.PNPDeviceID -match 'BasicDisplay' -or $_.Name -match 'Basic Display')
+            Name         = $_.Name
+            IsDiscrete   = $isDiscrete
+            IsBasic      = $isBasic
+            IsIntegrated = -not $isDiscrete -and -not $isBasic -and $_.PNPDeviceID -match $IntegratedGpuVendorIds
         }
     })
 
@@ -747,7 +790,7 @@ function Get-SystemInfo {
 }
 
 function Get-XboxEnabled {
-    return [bool](Get-AppxPackage -Name 'Microsoft.GamingApp' -ErrorAction SilentlyContinue)
+    return [bool](Get-AppxPackage -Name $XboxAppPackage -ErrorAction SilentlyContinue)
 }
 
 function Get-PrintingEnabled {
@@ -763,6 +806,15 @@ function Get-VirtualizationEnabled {
 function Get-ReturningApps {
     $installed = @(Get-AppxPackage -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
     return @($ReturningApps.Keys | Where-Object { $installed -contains $_ })
+}
+
+function Get-InstalledProgramNames {
+    $keys = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+    return @(Get-ItemProperty -Path $keys -ErrorAction SilentlyContinue | ForEach-Object { $_.DisplayName } | Where-Object { $_ })
 }
 
 function Assert-Winget {
@@ -869,10 +921,7 @@ function Add-FirefoxToTaskbar {
     while ((Get-Date) -lt $deadline -and -not (Get-Process -Name 'explorer' -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
     if (-not (Get-Process -Name 'explorer' -ErrorAction SilentlyContinue)) { Start-Process 'explorer.exe' }
     $deadline = (Get-Date).AddSeconds(30)
-    while ((Get-Date) -lt $deadline) {
-        $taskbar = [IntPtr]::Zero
-        try { $taskbar = [OwNative.Console]::FindWindow('Shell_TrayWnd', $null) } catch { $null = $_ }
-        if ($taskbar -ne [IntPtr]::Zero) { break }
+    while ($script:NativeReady -and (Get-Date) -lt $deadline -and [OwNative.Console]::FindWindow('Shell_TrayWnd', $null) -eq [IntPtr]::Zero) {
         Start-Sleep -Milliseconds 500
     }
     Start-Sleep -Seconds 3
@@ -885,10 +934,33 @@ function Disable-StartupEntry([string]$Name) {
     Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' $Name $bytes 'Binary'
 }
 
-function Invoke-AppSteps([string[]]$Apps) {
-    if ($Apps.Count -eq 0) { return }
-    Start-Section 'Applications'
+function Install-Firefox {
+    Invoke-Step 'Firefox' {
+        Install-WingetPackage 'Mozilla.Firefox.fr'
+        $script:FirefoxInstalledNow = -not $script:StepSkip
+    }
+    Invoke-Step 'Firefox: uBlock Origin and settings' { Set-FirefoxConfig }
+    Invoke-Step 'Firefox: pin to the taskbar' {
+        if (-not $script:FirefoxInstalledNow) { return (Skip 'Firefox not installed by this run') }
+        Add-FirefoxToTaskbar
+    }
+}
 
+function Install-Vlc {
+    Invoke-Step 'VLC' {
+        Install-WingetPackage 'VideoLAN.VLC'
+        Remove-Shortcut @('VLC media player.lnk')
+    }
+}
+
+function Install-AppWithoutStartup([string]$Name, [string]$Id) {
+    Invoke-Step $Name { Install-WingetPackage $Id }
+    Invoke-Step "${Name}: no launch at startup" { Disable-StartupEntry $Name }
+}
+
+function Invoke-AppSteps($Changes) {
+    if ($Changes.Count -eq 0) { return }
+    Start-Section 'Applications'
     Invoke-Step 'winget sources' {
         Assert-Winget
         try { Invoke-Native -File 'winget' -Arguments @('source', 'update', '--disable-interactivity') }
@@ -897,31 +969,7 @@ function Invoke-AppSteps([string[]]$Apps) {
             Invoke-Native -File 'winget' -Arguments @('source', 'update', '--disable-interactivity')
         }
     }
-    if (-not (Get-Command -Name 'winget' -ErrorAction SilentlyContinue)) { return }
-
-    if ($Apps -contains 'Firefox') {
-        $script:FirefoxInstalledNow = $false
-        Invoke-Step 'Firefox' {
-            Install-WingetPackage 'Mozilla.Firefox.fr'
-            $script:FirefoxInstalledNow = -not $script:StepSkip
-        }
-        Invoke-Step 'Firefox: uBlock Origin and settings' { Set-FirefoxConfig }
-        if ($script:FirefoxInstalledNow) { Invoke-Step 'Firefox: pin to the taskbar' { Add-FirefoxToTaskbar } }
-    }
-    if ($Apps -contains 'Vlc') {
-        Invoke-Step 'VLC' {
-            Install-WingetPackage 'VideoLAN.VLC'
-            Remove-Shortcut @('VLC media player.lnk')
-        }
-    }
-    if ($Apps -contains 'Steam') {
-        Invoke-Step 'Steam' { Install-WingetPackage 'Valve.Steam' }
-        Invoke-Step 'Steam: no launch at startup' { Disable-StartupEntry 'Steam' }
-    }
-    if ($Apps -contains 'Discord') {
-        Invoke-Step 'Discord' { Install-WingetPackage 'Discord.Discord' }
-        Invoke-Step 'Discord: no launch at startup' { Disable-StartupEntry 'Discord' }
-    }
+    foreach ($change in $Changes) { & $change.Action }
 }
 
 function Invoke-PrivacySteps {
@@ -1007,7 +1055,7 @@ function Invoke-SystemSteps($Info) {
 
     Invoke-Step 'Background apps' {
         $allowed = @('Microsoft.SecHealthUI_8wekyb3d8bbwe')
-        foreach ($name in 'Microsoft.GamingApp', 'Microsoft.XboxGamingOverlay') {
+        foreach ($name in $XboxAppPackage, $GameBarPackage) {
             if (Get-AppxPackage -Name $name -ErrorAction SilentlyContinue) { $allowed += "${name}_8wekyb3d8bbwe" }
         }
         Set-RegValue $AppPrivacyKey 'LetAppsRunInBackground' 2
@@ -1060,41 +1108,23 @@ function Invoke-PowerSteps($Info) {
         return
     }
 
-    if ($Info.IsDualCcdX3D) {
-        Invoke-Step 'Balanced plan (dual-CCD X3D: core parking kept)' {
-            Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced)
-        }
-    } else {
-        Invoke-Step 'Balanced plan + "Best performance" power mode' {
-            Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced)
-            try {
-                Invoke-Native -File 'powercfg.exe' -Arguments @('/overlaysetactive', $OverlayBestPerf)
-            } catch {
-                $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes'
-                Set-RegValue $key 'ActiveOverlayAcPowerScheme' $OverlayBestPerf 'String'
-                Set-RegValue $key 'ActiveOverlayDcPowerScheme' $OverlayBestPerf 'String'
-            }
-        }
-    }
+    Invoke-Step 'PCI Express link state power management' { Disable-PowerSetting $PowerPcieAspm }
+    Invoke-Step 'USB selective suspend' { Disable-PowerSetting $PowerUsbSelectiveSuspend }
+    Invoke-Step 'Wi-Fi power saving' { Disable-PowerSetting $PowerWifiSaving -AcOnly }
 
-    Invoke-Step 'PCI Express link state power management' {
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex', $SchemeBalanced, 'SUB_PCIEXPRESS', 'ASPM', '0')
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex', $SchemeBalanced, 'SUB_PCIEXPRESS', 'ASPM', '0')
-    }
-
-    Invoke-Step 'USB selective suspend' {
-        $sub = '2a737441-1930-4402-8d77-b2bebba308a3'; $setting = '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex', $SchemeBalanced, $sub, $setting, '0')
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex', $SchemeBalanced, $sub, $setting, '0')
-    }
-
-    Invoke-Step 'Wi-Fi power saving' {
-        $sub = '19cbb8fa-5279-450e-9fac-8a3d5fedd0c1'; $setting = '12bbebe6-58d6-4636-95bb-3217ef867c1a'
-        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex', $SchemeBalanced, $sub, $setting, '0')
-    }
-
-    Invoke-Step 'Apply the modified power plan' {
+    Invoke-Step 'Balanced plan' {
         Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive', $SchemeBalanced)
+    }
+
+    Invoke-Step '"Best performance" power mode' {
+        if ($Info.IsDualCcdX3D) { return (Skip 'dual-CCD X3D: core parking kept') }
+        try {
+            Invoke-Native -File 'powercfg.exe' -Arguments @('/overlaysetactive', $OverlayBestPerf)
+        } catch {
+            $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes'
+            Set-RegValue $key 'ActiveOverlayAcPowerScheme' $OverlayBestPerf 'String'
+            Set-RegValue $key 'ActiveOverlayDcPowerScheme' $OverlayBestPerf 'String'
+        }
     }
 
     Invoke-Step 'Network adapter power saving' {
@@ -1225,9 +1255,9 @@ function Invoke-NotificationSteps {
     }
 }
 
-function Disable-Xbox([bool]$KeepGameBar = $false) {
+function Disable-Xbox([switch]$KeepGameBar) {
     Invoke-Step 'Remove Xbox apps' {
-        $targets = @($XboxPackages | Where-Object { -not ($KeepGameBar -and $_ -eq 'Microsoft.XboxGamingOverlay') })
+        $targets = @($XboxPackages | Where-Object { -not ($KeepGameBar -and $_ -eq $GameBarPackage) })
         Uninstall-StoreApp $targets
     }
     if (-not $KeepGameBar) {
@@ -1277,49 +1307,67 @@ function Remove-ReturningApps {
     Invoke-Step 'Remove apps installed again' { Uninstall-StoreApp @(Get-ReturningApps) }
 }
 
-function Get-ChangeItems {
-    $firstRun = $null -eq (Get-RegValue $AppPrivacyKey 'LetAppsRunInBackground_ForceAllowTheseApps')
-    $items = New-Object System.Collections.Generic.List[object]
-    $add = {
-        param($Id, $Label, $Hint, [bool]$Current, $On, $Off)
-        $items.Add(@{ Id = $Id; Label = $Label; Hint = $Hint; Current = $Current; Value = ($Current -and -not $firstRun); On = $On; Off = $Off })
-    }
-    $app = { param($Text) @{ Text = $Text; IsApp = $true } }
+function Get-ChangeItems($Info) {
+    $apps = @(
+        @{ Program = 'Mozilla Firefox*'; Label = 'Firefox + uBlock Origin'
+           Hint = 'With the uBlock Origin ad blocker, without telemetry or sponsored content. Pinned to the taskbar.'
+           On = @{ Text = 'install Firefox'; IsApp = $true; Action = { Install-Firefox } } }
+        @{ Program = 'VLC media player*'; Label = 'VLC'
+           Hint = 'Plays any video or audio file.'
+           On = @{ Text = 'install VLC'; IsApp = $true; Action = { Install-Vlc } } }
+        @{ Program = 'Steam'; Label = 'Steam'
+           Hint = 'Installed with winget, not launched at startup.'
+           On = @{ Text = 'install Steam'; IsApp = $true; Action = { Install-AppWithoutStartup 'Steam' 'Valve.Steam' } } }
+        @{ Program = 'Discord'; Label = 'Discord'
+           Hint = 'Installed with winget, not launched at startup.'
+           On = @{ Text = 'install Discord'; IsApp = $true; Action = { Install-AppWithoutStartup 'Discord' 'Discord.Discord' } } }
+    )
+    $programs = @(Get-InstalledProgramNames)
 
-    if ($firstRun) {
-        & $add 'Firefox' 'Firefox + uBlock Origin' 'With the uBlock Origin ad blocker, without telemetry or sponsored content. Pinned to the taskbar.' $false (& $app 'install Firefox') $null
-        & $add 'Vlc' 'VLC' 'Plays any video or audio file.' $false (& $app 'install VLC') $null
-        & $add 'Steam' 'Steam' 'Installed with winget, not launched at startup.' $false (& $app 'install Steam') $null
-        & $add 'Discord' 'Discord' 'Installed with winget, not launched at startup.' $false (& $app 'install Discord') $null
+    $xboxHint = 'Needed for Game Pass. Unchecked: removed, controllers keep working.'
+    $removeXbox = @{ Text = 'remove Xbox'; Action = { Disable-Xbox } }
+    if ($Info.IsDualCcdX3D) {
+        $xboxHint = 'Needed for Game Pass. Unchecked: removed, except the Game Bar that your X3D processor uses to run games on the right CCD.'
+        $removeXbox = @{ Text = 'remove Xbox (Game Bar kept)'; Action = { Disable-Xbox -KeepGameBar } }
     }
-
-    & $add 'Xbox' 'Xbox (Xbox app, Game Pass, Game Bar)' 'Needed for Game Pass. Unchecked: removed, controllers keep working.' (Get-XboxEnabled) `
-        @{ Text = 'install Xbox'; Action = { Enable-Xbox } } `
-        @{ Text = 'remove Xbox'; Action = { Disable-Xbox $script:KeepGameBar } }
-    & $add 'Printing' 'Printing' 'Print services and PDF/XPS virtual printers. Unchecked: disabled.' (Get-PrintingEnabled) `
-        @{ Text = 'enable printing'; Action = { Enable-Printing } } `
-        @{ Text = 'disable printing'; Action = { Disable-Printing } }
-    & $add 'Virtualization' 'WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators. Unchecked: disabled.' (Get-VirtualizationEnabled) `
-        @{ Text = 'enable WSL'; Action = { Enable-Virtualization } } `
-        @{ Text = 'disable WSL'; Action = { Disable-Virtualization } }
-    & $add 'Notifications' 'Notifications' 'Discord, Steam, Windows Update, Windows Security. Unchecked: no notifications at all.' (Get-NotificationsEnabled) `
-        @{ Text = 'turn on notifications'; Action = { Set-Notifications $true } } `
-        @{ Text = 'turn off all notifications'; Action = { Set-Notifications $false } }
 
     $returning = @(Get-ReturningApps)
-    if ($returning.Count -gt 0) {
-        $names = ($returning | ForEach-Object { $ReturningApps[$_] }) -join ', '
-        & $add 'ReturningApps' "$names (installed again by Windows)" 'Removed by the USB key, installed again since by Windows Update or the Store. Unchecked: removed.' $true `
-            $null @{ Text = "remove $names"; Action = { Remove-ReturningApps } }
+    $returningNames = ($returning | ForEach-Object { $ReturningApps[$_] }) -join ', '
+
+    $items = @(
+        foreach ($app in $apps) { if (-not ($programs -like $app.Program)) { $app } }
+        @{ Label = 'Xbox (Xbox app, Game Pass, Game Bar)'; Hint = $xboxHint; Current = (Get-XboxEnabled)
+           On = @{ Text = 'install Xbox'; Action = { Enable-Xbox } }
+           Off = $removeXbox }
+        @{ Label = 'Printing'; Hint = 'Print services and PDF/XPS virtual printers. Unchecked: disabled.'; Current = (Get-PrintingEnabled)
+           On = @{ Text = 'enable printing'; Action = { Enable-Printing } }
+           Off = @{ Text = 'disable printing'; Action = { Disable-Printing } } }
+        @{ Label = 'WSL / virtualization'; Hint = 'Docker Desktop, WSL2 and Android emulators. Unchecked: disabled.'; Current = (Get-VirtualizationEnabled)
+           On = @{ Text = 'enable WSL'; Action = { Enable-Virtualization } }
+           Off = @{ Text = 'disable WSL'; Action = { Disable-Virtualization } } }
+        @{ Label = 'Notifications'; Hint = 'Discord, Steam, Windows Update, Windows Security. Unchecked: no notifications at all.'; Current = (Get-NotificationsEnabled)
+           On = @{ Text = 'turn on notifications'; Action = { Set-Notifications $true } }
+           Off = @{ Text = 'turn off all notifications'; Action = { Set-Notifications $false } } }
+        if ($returning.Count -gt 0) {
+            @{ Label = "$returningNames (installed again by Windows)"; Current = $true
+               Hint = 'Removed by the USB key, installed again since by Windows Update or the Store. Unchecked: removed.'
+               Off = @{ Text = "remove $returningNames"; Action = { Remove-ReturningApps } } }
+        }
+    )
+
+    $firstRun = $null -eq (Get-RegValue $AppPrivacyKey 'LetAppsRunInBackground_ForceAllowTheseApps')
+    foreach ($item in $items) {
+        $item.Current = [bool]$item.Current
+        $item.Value = $item.Current -and -not $firstRun
     }
-    return $items.ToArray()
+    return $items
 }
 
 function Get-SelectedChanges($Items) {
     foreach ($item in $Items) {
         if ($item.Value -eq $item.Current) { continue }
         $change = if ($item.Value) { $item.On } else { $item.Off }
-        if ($change) { [pscustomobject]@{ Id = $item.Id; Text = $change.Text; IsApp = [bool]$change.IsApp; Action = $change.Action } }
+        if ($change) { $change }
     }
 }
 
@@ -1329,114 +1377,33 @@ function Invoke-ChangeSteps($Changes) {
     foreach ($change in $Changes) { & $change.Action }
 }
 
-$displayHelperLoaded = $false
-function Initialize-DisplayHelper {
-    if ($script:displayHelperLoaded) { return }
-    Add-Type -TypeDefinition @'
-using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-
-public static class OwDisplayInfo
-{
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct DISPLAY_DEVICE
-    {
-        public int cb;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
-        public int StateFlags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct DEVMODE
-    {
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
-        public short dmSpecVersion; public short dmDriverVersion; public short dmSize; public short dmDriverExtra;
-        public int dmFields; public int dmPositionX; public int dmPositionY;
-        public int dmDisplayOrientation; public int dmDisplayFixedOutput;
-        public short dmColor; public short dmDuplex; public short dmYResolution; public short dmTTOption; public short dmCollate;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
-        public short dmLogPixels; public int dmBitsPerPel; public int dmPelsWidth; public int dmPelsHeight;
-        public int dmDisplayFlags; public int dmDisplayFrequency; public int dmICMMethod; public int dmICMIntent;
-        public int dmMediaType; public int dmDitherType; public int dmReserved1; public int dmReserved2;
-        public int dmPanningWidth; public int dmPanningHeight;
-    }
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    static extern bool EnumDisplayDevices(string lpDevice, uint iDevNum, ref DISPLAY_DEVICE lpDisplayDevice, uint dwFlags);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    static extern bool EnumDisplaySettings(string deviceName, int modeNum, ref DEVMODE devMode);
-
-    public class Result
-    {
-        public string Adapter; public int Width; public int Height; public int CurrentHz; public int MaxHz;
-    }
-
-    public static List<Result> Get()
-    {
-        var list = new List<Result>();
-        for (uint i = 0; ; i++)
-        {
-            var d = new DISPLAY_DEVICE();
-            d.cb = Marshal.SizeOf(d);
-            if (!EnumDisplayDevices(null, i, ref d, 0)) break;
-            if ((d.StateFlags & 1) == 0) continue; // not attached to the desktop
-            var cur = new DEVMODE();
-            cur.dmSize = (short)Marshal.SizeOf(cur);
-            if (!EnumDisplaySettings(d.DeviceName, -1, ref cur)) continue;
-            int max = cur.dmDisplayFrequency;
-            var m = new DEVMODE();
-            m.dmSize = (short)Marshal.SizeOf(m);
-            for (int k = 0; EnumDisplaySettings(d.DeviceName, k, ref m); k++)
-            {
-                if (m.dmPelsWidth == cur.dmPelsWidth && m.dmPelsHeight == cur.dmPelsHeight && m.dmDisplayFrequency > max)
-                    max = m.dmDisplayFrequency;
-            }
-            var r = new Result();
-            r.Adapter = d.DeviceString; r.Width = cur.dmPelsWidth; r.Height = cur.dmPelsHeight;
-            r.CurrentHz = cur.dmDisplayFrequency; r.MaxHz = max;
-            list.Add(r);
-        }
-        return list;
-    }
-}
-'@
-    $script:displayHelperLoaded = $true
-}
-
-function Add-Check([string]$Level, [string]$Message, [string]$Advice) {
-    $script:Checks.Add([pscustomobject]@{ Level = $Level; Message = $Message; Advice = $Advice })
+function New-Check([string]$Level, [string]$Message, [string]$Advice) {
+    [pscustomobject]@{ Level = $Level; Message = $Message; Advice = $Advice }
 }
 
 function Get-HealthChecks($Info) {
-    $script:Checks = New-Object System.Collections.Generic.List[object]
-
     $dg = Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' -ClassName Win32_DeviceGuard -ErrorAction SilentlyContinue
     if ($dg -and $dg.VirtualizationBasedSecurityStatus -eq $VbsRunning) {
-        Add-Check 'warn' 'VBS / memory integrity still running' 'Windows Security > Device security > Core isolation: turn off, then restart'
+        New-Check 'warn' 'VBS / memory integrity still running' 'Windows Security > Device security > Core isolation: turn off, then restart'
     } else {
-        Add-Check 'ok' 'VBS disabled'
+        New-Check 'ok' 'VBS disabled'
     }
 
     if ($Info.IsVM) {
-        Add-Check 'info' 'Virtual machine: hardware checks skipped'
-        return $script:Checks.ToArray()
+        New-Check 'info' 'Virtual machine: hardware checks skipped'
+        return
     }
 
     try {
         if (Confirm-SecureBootUEFI) {
             $db = [Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI -Name db).Bytes)
-            if ($db -match 'Windows UEFI CA 2023') { Add-Check 'ok' 'Secure Boot enabled, 2023 certificates present' }
-            else { Add-Check 'warn' 'Secure Boot enabled, 2023 certificates missing' 'Install all Windows updates, then update the BIOS' }
+            if ($db -match 'Windows UEFI CA 2023') { New-Check 'ok' 'Secure Boot enabled, 2023 certificates present' }
+            else { New-Check 'warn' 'Secure Boot enabled, 2023 certificates missing' 'Install all Windows updates, then update the BIOS' }
         } else {
-            Add-Check 'warn' 'Secure Boot disabled' 'Required by the anti-cheat of Valorant, League of Legends, Battlefield...'
+            New-Check 'warn' 'Secure Boot disabled' 'Required by the anti-cheat of Valorant, League of Legends, Battlefield...'
         }
     } catch {
-        Add-Check 'info' 'Secure Boot not supported (legacy BIOS / CSM)'
+        New-Check 'info' 'Secure Boot not supported (legacy BIOS / CSM)'
     }
 
     if (-not $Info.IsLaptop) {
@@ -1448,43 +1415,41 @@ function Get-HealthChecks($Info) {
             if ($parts.Count -gt 0) { $label += ' (kit: {0})' -f ($parts -join ', ') }
             $jedec = [int]($modules | Measure-Object -Property Speed -Minimum).Minimum
             if ($jedec -gt 0 -and $speed -gt $jedec) {
-                Add-Check 'ok' ($label + ', EXPO/XMP active')
+                New-Check 'ok' ($label + ', EXPO/XMP active')
             } else {
-                Add-Check 'info' ($label + ', no EXPO/XMP profile detected') 'If the kit is rated faster, enable EXPO (AMD) or XMP (Intel) in the BIOS'
+                New-Check 'info' ($label + ', no EXPO/XMP profile detected') 'If the kit is rated faster, enable EXPO (AMD) or XMP (Intel) in the BIOS'
             }
         }
 
-        $integrated = @($Info.Gpus | Where-Object { -not $_.IsDiscrete -and -not $_.IsBasic -and ($_.Vendor -eq 'AMD' -or $_.Vendor -eq 'Intel') })
+        $integrated = @($Info.Gpus | Where-Object { $_.IsIntegrated })
         if ($integrated.Count -gt 0 -and @($Info.Gpus | Where-Object { $_.IsDiscrete }).Count -gt 0) {
             $installed = ($modules | Measure-Object -Property Capacity -Sum).Sum
             $visible = (Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory
             $reserved = [math]::Max(0, [math]::Round(($installed - $visible) / 1GB, 1))
-            Add-Check 'info' ('Integrated graphics enabled ({0}), {1} GB of RAM reserved' -f $integrated[0].Name, $reserved) 'Not used for video encoding or an extra display? Disable it in the BIOS'
+            New-Check 'info' ('Integrated graphics enabled ({0}), {1} GB of RAM reserved' -f $integrated[0].Name, $reserved) 'Not used for video encoding or an extra display? Disable it in the BIOS'
         }
     }
 
     foreach ($gpu in $Info.Gpus) {
         if ($gpu.IsBasic) {
-            Add-Check 'warn' "Microsoft basic display driver ($($gpu.Name))" 'Install the driver with NVIDIA App or AMD Adrenalin'
+            New-Check 'warn' "Microsoft basic display driver ($($gpu.Name))" 'Install the driver with NVIDIA App or AMD Adrenalin'
         } elseif ($gpu.IsDiscrete) {
-            Add-Check 'ok' "Graphics driver installed: $($gpu.Name)"
+            New-Check 'ok' "Graphics driver installed: $($gpu.Name)"
         }
     }
 
     try {
-        Initialize-DisplayHelper
-        foreach ($d in [OwDisplayInfo]::Get()) {
+        foreach ($d in [OwNative.Display]::Get()) {
             $label = 'Display {0}x{1} at {2} Hz' -f $d.Width, $d.Height, $d.CurrentHz
             if ($d.MaxHz -gt $d.CurrentHz) {
-                Add-Check 'warn' $label ('{0} Hz available: Settings > System > Display > Advanced display' -f $d.MaxHz)
+                New-Check 'warn' $label ('{0} Hz available: Settings > System > Display > Advanced display' -f $d.MaxHz)
             } else {
-                Add-Check 'ok' $label
+                New-Check 'ok' $label
             }
         }
     } catch {
-        Add-Check 'info' 'Displays: cannot be checked'
+        New-Check 'info' 'Displays: cannot be checked'
     }
-    return $script:Checks.ToArray()
 }
 
 function Start-Run {
@@ -1492,18 +1457,12 @@ function Start-Run {
 
     Show-Loading
     $info = Get-SystemInfo
-    $items = @(Get-ChangeItems)
+    $items = @(Get-ChangeItems $info)
     if (-not (Read-Selection $items)) { exit 0 }
     $changes = @(Get-SelectedChanges $items)
 
-    $xbox = $items | Where-Object { $_.Id -eq 'Xbox' }
-    $script:KeepGameBar = $false
-    if ($info.IsDualCcdX3D -and $xbox.Current -and -not $xbox.Value) {
-        $script:KeepGameBar = Read-FrameYesNo 'KEEP THE GAME BAR?' @('Your X3D processor uses the Game Bar to send games to the right CCD.')
-    }
-
     Invoke-Run {
-        Invoke-AppSteps @($changes | Where-Object { $_.IsApp } | ForEach-Object { $_.Id })
+        Invoke-AppSteps @($changes | Where-Object { $_.IsApp })
         Invoke-ChangeSteps @($changes | Where-Object { -not $_.IsApp })
         Invoke-PrivacySteps
         Invoke-AiSteps
