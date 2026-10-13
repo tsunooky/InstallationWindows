@@ -41,21 +41,23 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 ## 4. Lancer le script
 
 1. Ouvrir la clé USB, double-cliquer sur `setup.cmd`, puis accepter la demande d'autorisation.
-2. Cocher ce que vous utilisez avec <kbd>Espace</kbd> ou <kbd>Entrée</kbd>, puis descendre sur **START** et appuyer sur <kbd>Entrée</kbd>. Ce qui n'est pas coché est retiré ou désactivé : Xbox est désinstallé, l'impression, WSL et les notifications sont coupés. Steam et Discord ne sont jamais désinstallés. Sur **START**, le script résume ce qu'il va changer. <kbd>Échap</kbd> quitte sans rien faire.
+2. Cocher ce que vous utilisez avec <kbd>Espace</kbd> ou <kbd>Entrée</kbd>, puis descendre sur **START** et appuyer sur <kbd>Entrée</kbd>. Ce qui n'est pas coché est retiré ou désactivé : Xbox est désinstallé, l'impression, WSL et les notifications sont coupés. Les applications (Firefox, VLC, Steam, Discord) ne sont proposées qu'au premier lancement, et jamais désinstallées. Sur **START**, le script résume ce qu'il va changer. <kbd>Échap</kbd> quitte sans rien faire.
 
 ```
 ╭─ Windows Optimization ─────────────────────────────────────────────────────╮
 │                                                                            │
-│  CHECK WHAT YOU WILL USE                                                   │
-│  ▸ [ ] Xbox (Xbox app, Game Pass, Game Bar)                                │
+│  CHECK WHAT YOU USE                                                        │
+│  ▸ [ ] Firefox + uBlock Origin                                             │
+│    [ ] VLC                                                                 │
+│    [ ] Steam                                                               │
+│    [ ] Discord                                                             │
+│    [ ] Xbox (Xbox app, Game Pass, Game Bar)                                │
 │    [ ] Printing                                                            │
 │    [ ] WSL / virtualization                                                │
 │    [ ] Notifications                                                       │
-│    [ ] Steam                                                               │
-│    [ ] Discord                                                             │
 │                                                                            │
-│    Needed for Game Pass. Unchecked: removed, controllers keep working.     │
-│                                                                            │
+│    With the uBlock Origin ad blocker, without telemetry or sponsored       │
+│    content. Pinned to the taskbar.                                         │
 │                                                                            │
 │    ╭───────────╮                                                           │
 │    │   START   │   3 changes + all optimizations                           │
@@ -74,7 +76,7 @@ Au premier lancement, rien n'est coché. Aux lancements suivants, les cases repr
 <details>
 <summary>Ce que fait le script</summary>
 
-- **Applications** : Firefox avec uBlock Origin, VLC et 7-Zip. Steam et Discord si cochés, sans lancement au démarrage de Windows.
+- **Applications** (premier lancement, au choix) : Firefox avec uBlock Origin, VLC, Steam et Discord. Steam et Discord ne se lancent pas au démarrage de Windows.
 - **Confidentialité** : télémétrie, publicité ciblée, rapport d'erreurs, Copilot, Recall et résultats web de la recherche coupés.
 - **Système** : services inutiles arrêtés, applications en arrière-plan coupées, hibernation désactivée.
 - **Latence** (PC fixe) : mode d'alimentation « Meilleures performances », économies d'énergie désactivées.

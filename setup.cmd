@@ -21,7 +21,7 @@ exit /b
     Windows 11 optimization - post-installation script.
 
 .DESCRIPTION
-    Installs the base applications if missing, applies the privacy, performance and
+    Installs the applications chosen at the first run, applies the privacy, performance and
     debloat settings of the InstallationWindows guide, applies the list of what is used
     (Xbox, printing, WSL/virtualization, notifications...) and runs
     a read-only health check. Every run does the same thing: run it again after a
@@ -43,6 +43,8 @@ $MinBuild      = 26100
 $TaskbarXml    = Join-Path $env:SystemRoot 'Setup\Scripts\TaskbarLayoutModification.xml'
 # Background apps policy: set by every run and never by autounattend.xml, it also tells a first run.
 $AppPrivacyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy'
+# Lines of the list that install an application (Invoke-AppSteps); the others are Invoke-ChangeSteps.
+$AppIds        = @('Firefox', 'Vlc', 'Steam', 'Discord')
 
 $SchemeBalanced        = '381b4222-f694-41f0-9685-ff5bb260df2e'
 $OverlayBestPerf       = 'ded574b5-45a0-4f42-8737-46345c09c238'
@@ -538,7 +540,7 @@ function Show-SelectionFrame([object[]]$Items, [int]$Focus) {
     [Console]::SetCursorPosition(0, 0)
     Write-FrameLine $BoxChar.TL $BoxChar.TR 'Windows Optimization'
     Write-FrameRow
-    Write-FrameRow -Left (Seg '  CHECK WHAT YOU WILL USE' 'White')
+    Write-FrameRow -Left (Seg '  CHECK WHAT YOU USE' 'White')
     for ($i = 0; $i -lt $Items.Count; $i++) {
         $pointer = '    '
         $color = 'Gray'
@@ -883,15 +885,6 @@ function Get-VirtualizationEnabled {
     return (Test-FeatureEnabled $VirtualizationDisable)
 }
 
-function Test-SteamInstalled {
-    $exe = Get-RegValue 'HKCU:\Software\Valve\Steam' 'SteamExe'
-    return ($exe -and (Test-Path -LiteralPath $exe)) -or (Test-Path -LiteralPath "${env:ProgramFiles(x86)}\Steam\steam.exe")
-}
-
-function Test-DiscordInstalled {
-    return (Test-Path -LiteralPath "$env:LOCALAPPDATA\Discord\Update.exe")
-}
-
 function Get-ReturningApps {
     $installed = @(Get-AppxPackage -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
     return @($ReturningApps.Keys | Where-Object { $installed -contains $_ })
@@ -1041,7 +1034,9 @@ function Disable-StartupEntry([string]$Name) {
     Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' $Name $bytes 'Binary'
 }
 
+# Only the applications checked at the first run.
 function Invoke-AppSteps($Selected) {
+    if (-not @($AppIds | Where-Object { $Selected.Contains($_) })) { return }
     Start-Section 'Applications'
 
     Invoke-Step 'winget sources' {
@@ -1056,20 +1051,23 @@ function Invoke-AppSteps($Selected) {
     # Without winget, every install below would only repeat the failure above.
     if (-not (Get-Command -Name 'winget' -ErrorAction SilentlyContinue)) { return }
 
-    $script:FirefoxInstalledNow = $false
-    Invoke-Step 'Firefox' {
-        Install-WingetPackage 'Mozilla.Firefox.fr'
-        $script:FirefoxInstalledNow = -not $script:StepSkip
+    # Firefox is set up only when chosen: a Firefox the user installs alone stays as it is.
+    if ($Selected.Firefox) {
+        $script:FirefoxInstalledNow = $false
+        Invoke-Step 'Firefox' {
+            Install-WingetPackage 'Mozilla.Firefox.fr'
+            $script:FirefoxInstalledNow = -not $script:StepSkip
+        }
+        Invoke-Step 'Firefox: uBlock Origin and settings' { Set-FirefoxConfig }
+        # Only right after the install: the user may have changed the pins since.
+        if ($script:FirefoxInstalledNow) { Invoke-Step 'Firefox: pin to the taskbar' { Add-FirefoxToTaskbar } }
     }
-    Invoke-Step 'Firefox: uBlock Origin and settings' { Set-FirefoxConfig }
-    # Only right after the install: the user may have changed the pins since.
-    if ($script:FirefoxInstalledNow) { Invoke-Step 'Firefox: pin to the taskbar' { Add-FirefoxToTaskbar } }
-    Invoke-Step 'VLC' {
-        Install-WingetPackage 'VideoLAN.VLC'
-        Remove-Shortcut @('VLC media player.lnk')
+    if ($Selected.Vlc) {
+        Invoke-Step 'VLC' {
+            Install-WingetPackage 'VideoLAN.VLC'
+            Remove-Shortcut @('VLC media player.lnk')
+        }
     }
-    Invoke-Step '7-Zip' { Install-WingetPackage '7zip.7zip' }
-
     if ($Selected.Steam) {
         Invoke-Step 'Steam' { Install-WingetPackage 'Valve.Steam' }
         Invoke-Step 'Steam: no launch at startup' { Disable-StartupEntry 'Steam' }
@@ -1459,6 +1457,15 @@ function Get-ChangeItems {
                       OnId = $OnId; OnText = $OnText; OffId = $OffId; OffText = $OffText })
     }
 
+    # Applications: first run only, and never uninstalled (uninstalling Steam deletes the games in its
+    # folder). Current is $false: the install step skips an application that is already there.
+    if ($firstRun) {
+        & $add 'Firefox + uBlock Origin' 'With the uBlock Origin ad blocker, without telemetry or sponsored content. Pinned to the taskbar.' $false 'Firefox' 'install Firefox' $null $null
+        & $add 'VLC' 'Plays any video or audio file.' $false 'Vlc' 'install VLC' $null $null
+        & $add 'Steam' 'Installed with winget, not launched at startup.' $false 'Steam' 'install Steam' $null $null
+        & $add 'Discord' 'Installed with winget, not launched at startup.' $false 'Discord' 'install Discord' $null $null
+    }
+
     & $add 'Xbox (Xbox app, Game Pass, Game Bar)' 'Needed for Game Pass. Unchecked: removed, controllers keep working.' (Get-XboxEnabled) 'XboxOn' 'install Xbox' 'XboxOff' 'remove Xbox'
     & $add 'Printing' 'Print spooler and PDF/XPS virtual printers. Unchecked: disabled.' (Get-PrintingEnabled) 'PrintingOn' 'enable printing' 'PrintingOff' 'disable printing'
     & $add 'WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators. Unchecked: disabled.' (Get-VirtualizationEnabled) 'VirtOn' 'enable WSL' 'VirtOff' 'disable WSL'
@@ -1470,10 +1477,6 @@ function Get-ChangeItems {
         $names = ($returning | ForEach-Object { $ReturningApps[$_] }) -join ', '
         & $add "$names (installed again by Windows)" 'Removed by the USB key, installed again since by Windows Update or the Store. Unchecked: removed.' $true $null $null 'ReturningApps' "remove $names"
     }
-
-    # Never uninstalled: uninstalling Steam deletes the games in its folder.
-    & $add 'Steam' 'Installed with winget, not launched at startup. Unchecking does not uninstall it.' (Test-SteamInstalled) 'Steam' 'install Steam' $null $null
-    & $add 'Discord' 'Installed with winget, not launched at startup. Unchecking does not uninstall it.' (Test-DiscordInstalled) 'Discord' 'install Discord' $null $null
     return $items.ToArray()
 }
 
@@ -1489,7 +1492,7 @@ function Get-SelectedChanges($Items) {
 }
 
 function Invoke-ChangeSteps($Selected, [bool]$KeepGameBar) {
-    $changes = @($Selected.Keys | Where-Object { $_ -notin 'Steam', 'Discord' })
+    $changes = @($Selected.Keys | Where-Object { $_ -notin $AppIds })
     if ($changes.Count -eq 0) { return }
     Start-Section 'Changes'
     if ($Selected.XboxOff) { Disable-Xbox -KeepGameBar $KeepGameBar }
