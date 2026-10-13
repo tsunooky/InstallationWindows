@@ -10,7 +10,7 @@ Une installation de Windows 11 sans compte Microsoft ni applications inutiles, a
 1. Télécharger ce dépôt : bouton **Code** > **Download ZIP**, puis extraire le dossier.
 2. Télécharger l'outil Microsoft : [Créer un support d'installation de Windows 11](https://www.microsoft.com/fr-fr/software-download/windows11).
 3. Lancer l'outil et créer la clé USB (8 Go minimum, son contenu est effacé).
-4. Copier les fichiers `autounattend.xml` et `setup.ps1` à la racine de la clé, sans les renommer.
+4. Copier les fichiers `autounattend.xml` et `setup.cmd` à la racine de la clé, sans les renommer.
 5. PC fixe avec plusieurs disques : débrancher tous les disques sauf celui qui recevra Windows.
 
 > [!TIP]
@@ -47,7 +47,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 
 ## 4. Lancer le script
 
-1. Ouvrir la clé USB, clic droit sur `setup.ps1` > **Exécuter avec PowerShell**, puis accepter la demande d'autorisation.
+1. Ouvrir la clé USB, double-cliquer sur `setup.cmd`, puis accepter la demande d'autorisation.
 2. Vérifier le matériel détecté, puis cocher ce que vous voulez changer avec <kbd>Espace</kbd> et valider avec <kbd>Entrée</kbd>. Chaque ligne indique l'action qui sera faite ; une ligne non cochée ne change rien.
 
 ```
@@ -86,7 +86,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 Le script crée le raccourci **Optimisation Windows** sur le Bureau. Le relancer refait les mêmes réglages sans toucher à ce qui est déjà en place : à faire après une grosse mise à jour de Windows, ou pour activer ou désactiver un élément de la liste.
 
 > [!TIP]
-> Raccourci supprimé par erreur ? Relancez `setup.ps1` depuis la clé USB ou depuis ce dépôt : il recrée le raccourci.
+> Raccourci supprimé par erreur ? Relancez `setup.cmd` depuis la clé USB : il recrée le raccourci.
 
 ## 5. Régler la carte graphique
 
