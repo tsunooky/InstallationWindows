@@ -23,7 +23,7 @@ exit /b
 .DESCRIPTION
     Installs the base applications if missing, applies the privacy, performance and
     debloat settings of the InstallationWindows guide, applies the changes checked in
-    the list (Xbox, printing, WSL/virtualization, OneDrive, notifications...) and runs
+    the list (Xbox, printing, WSL/virtualization, notifications...) and runs
     a read-only health check. Every run does the same thing: run it again after a
     major Windows update.
 
@@ -768,6 +768,12 @@ function Invoke-AppSteps($Selected) {
         Remove-Shortcut @('VLC media player.lnk')
     }
     Invoke-Step '7-Zip' { Install-WingetPackage '7zip.7zip' }
+    # Removed by the USB key; a major Windows update or Microsoft 365 can install it again.
+    Invoke-Step 'Uninstall OneDrive' {
+        if (-not (Get-OneDriveInstalled)) { return (Skip 'not installed') }
+        Get-Process -Name 'OneDrive' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        Uninstall-WingetPackage 'Microsoft.OneDrive'
+    }
 
     if ($Selected.Steam) {
         Invoke-Step 'Steam' { Install-WingetPackage 'Valve.Steam' }
@@ -1141,17 +1147,6 @@ function Enable-Virtualization {
     }
 }
 
-function Enable-OneDrive {
-    Invoke-Step 'Install OneDrive' { Install-WingetPackage 'Microsoft.OneDrive' }
-}
-
-function Disable-OneDrive {
-    Invoke-Step 'Uninstall OneDrive' {
-        Get-Process -Name 'OneDrive' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-        Uninstall-WingetPackage 'Microsoft.OneDrive'
-    }
-}
-
 function Remove-ReturningApps {
     Invoke-Step 'Remove apps installed again' { Uninstall-StoreApp @(Get-ReturningApps) }
 }
@@ -1170,9 +1165,6 @@ function Get-ChangeItems {
 
     if (Get-VirtualizationEnabled) { & $add 'VirtOff' 'Disable WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators stop working.' }
     else { & $add 'VirtOn' 'Enable WSL / virtualization' 'Needed for Docker Desktop, WSL2 and Android emulators.' }
-
-    if (Get-OneDriveInstalled) { & $add 'OneDriveOff' 'Uninstall OneDrive' 'Microsoft file sync.' }
-    else { & $add 'OneDriveOn' 'Install OneDrive' 'Microsoft file sync.' }
 
     if (Get-NotificationsEnabled) { & $add 'NotificationsOff' 'Turn off notifications' 'No notifications at all: Discord, Steam, Windows Update, Windows Security.' }
     else { & $add 'NotificationsOn' 'Turn on notifications' 'Discord, Steam, Windows Update, Windows Security.' }
@@ -1198,8 +1190,6 @@ function Invoke-ChangeSteps($Selected, [bool]$KeepGameBar) {
     if ($Selected.PrintingOn) { Enable-Printing }
     if ($Selected.VirtOff) { Disable-Virtualization }
     if ($Selected.VirtOn) { Enable-Virtualization }
-    if ($Selected.OneDriveOff) { Disable-OneDrive }
-    if ($Selected.OneDriveOn) { Enable-OneDrive }
     if ($Selected.NotificationsOff) { Set-Notifications $false }
     if ($Selected.NotificationsOn) { Set-Notifications $true }
     if ($Selected.ReturningApps) { Remove-ReturningApps }
