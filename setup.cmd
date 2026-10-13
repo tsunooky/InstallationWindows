@@ -490,7 +490,7 @@ function Write-FrameRow([object[]]$Left = @(), [object[]]$Right = @()) {
     Write-Host $BoxChar.V -ForegroundColor DarkGray
 }
 
-function Write-Button([string]$Indent, [string[]]$Labels, [int]$Focus, [object[]]$After = @()) {
+function Write-Button([string]$Indent, [string[]]$Labels, [int]$Focus) {
     $top = @(Seg $Indent)
     $middle = @(Seg $Indent)
     $bottom = @(Seg $Indent)
@@ -505,7 +505,7 @@ function Write-Button([string]$Indent, [string[]]$Labels, [int]$Focus, [object[]
         $bottom += Seg ($BoxChar.BL + $line + $BoxChar.BR) $border
     }
     Write-FrameRow -Left $top
-    Write-FrameRow -Left ($middle + $After)
+    Write-FrameRow -Left $middle
     Write-FrameRow -Left $bottom
 }
 
@@ -568,12 +568,9 @@ function Show-SelectionFrame([object[]]$Items, [int]$Focus) {
     }
     Write-FrameRow
 
-    $status = 'No change, optimizations only'
-    if ($changes.Count -eq 1) { $status = '1 change + all optimizations' }
-    elseif ($changes.Count -gt 1) { $status = '{0} changes + all optimizations' -f $changes.Count }
     $buttonFocus = -1
     if ($Focus -eq $Items.Count) { $buttonFocus = 0 }
-    Write-Button '    ' @('   START   ') $buttonFocus @(Seg ('   ' + $status) 'Gray')
+    Write-Button '    ' @('   START   ') $buttonFocus
     Write-FrameRow
     Write-FrameLine $BoxChar.LT $BoxChar.RT
     Write-KeyHelp @('Up/Down', 'move', 'Space/Enter', 'check', 'Enter on START', 'run', 'Esc', 'quit')
@@ -1224,11 +1221,6 @@ function Invoke-InterfaceSteps {
         Set-RegValue 'HKCU:\Control Panel\Accessibility\ToggleKeys' 'Flags' '58' 'String'
     }
 
-    Invoke-Step 'Autocorrect and misspelling highlight' {
-        Set-RegValue 'HKCU:\Software\Microsoft\TabletTip\1.7' 'EnableAutocorrection' 0
-        Set-RegValue 'HKCU:\Software\Microsoft\TabletTip\1.7' 'EnableSpellchecking' 0
-    }
-
     Invoke-Step 'Volume reduction during calls' {
         Set-RegValue 'HKCU:\Software\Microsoft\Multimedia\Audio' 'UserDuckingPreference' 3
     }
@@ -1406,24 +1398,17 @@ function Get-HealthChecks($Info) {
         New-Check 'info' 'Secure Boot not supported (legacy BIOS / CSM)'
     }
 
-    if (-not $Info.IsLaptop) {
-        $modules = @(Get-CimInstance -ClassName Win32_PhysicalMemory)
-        if ($modules.Count -gt 0) {
-            $speed = [int]($modules | Measure-Object -Property ConfiguredClockSpeed -Maximum).Maximum
-            $parts = @($modules | ForEach-Object { ([string]$_.PartNumber).Trim() } | Where-Object { $_ } | Select-Object -Unique)
-            $label = 'RAM at {0} MT/s' -f $speed
-            if ($parts.Count -gt 0) { $label += ' (kit: {0})' -f ($parts -join ', ') }
-            $jedec = [int]($modules | Measure-Object -Property Speed -Minimum).Minimum
-            if ($jedec -gt 0 -and $speed -gt $jedec) {
-                New-Check 'ok' ($label + ', EXPO/XMP active')
-            } else {
-                New-Check 'info' ($label + ', no EXPO/XMP profile detected') 'If the kit is rated faster, enable EXPO (AMD) or XMP (Intel) in the BIOS'
-            }
-        }
+    $tpm = Get-CimInstance -Namespace 'root\cimv2\Security\MicrosoftTpm' -ClassName Win32_Tpm -ErrorAction SilentlyContinue
+    if ($tpm -and $tpm.IsEnabled_InitialValue -and $tpm.SpecVersion -match '^2\.0') {
+        New-Check 'ok' 'TPM 2.0 enabled'
+    } else {
+        New-Check 'warn' 'TPM 2.0 missing or disabled' 'Required by the anti-cheat of Battlefield 6, Call of Duty, Valorant...: enable fTPM (AMD) or PTT (Intel) in the BIOS'
+    }
 
+    if (-not $Info.IsLaptop) {
         $integrated = @($Info.Gpus | Where-Object { $_.IsIntegrated })
         if ($integrated.Count -gt 0 -and @($Info.Gpus | Where-Object { $_.IsDiscrete }).Count -gt 0) {
-            $installed = ($modules | Measure-Object -Property Capacity -Sum).Sum
+            $installed = (Get-CimInstance -ClassName Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum
             $visible = (Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory
             $reserved = [math]::Max(0, [math]::Round(($installed - $visible) / 1GB, 1))
             New-Check 'info' ('Integrated graphics enabled ({0}), {1} GB of RAM reserved' -f $integrated[0].Name, $reserved) 'Not used for video encoding or an extra display? Disable it in the BIOS'

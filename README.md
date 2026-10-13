@@ -60,7 +60,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 │    content. Pinned to the taskbar.                                         │
 │                                                                            │
 │    ╭───────────╮                                                           │
-│    │   START   │   3 changes + all optimizations                           │
+│    │   START   │                                                           │
 │    ╰───────────╯                                                           │
 │                                                                            │
 ├────────────────────────────────────────────────────────────────────────────┤
