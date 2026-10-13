@@ -14,11 +14,16 @@ exit /b
 $MinBuild      = 26100
 $TaskbarXml    = Join-Path $env:SystemRoot 'Setup\Scripts\TaskbarLayoutModification.xml'
 $AppPrivacyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy'
-$AppIds        = @('Firefox', 'Vlc', 'Steam', 'Discord')
 
 $SchemeBalanced        = '381b4222-f694-41f0-9685-ff5bb260df2e'
 $OverlayBestPerf       = 'ded574b5-45a0-4f42-8737-46345c09c238'
 $NullPersistentHandler = '{098f2470-bae0-11cd-b579-08002b30bfeb}'
+$LinuxPartitionGuid    = '{0FC63DAF-8483-4772-8E79-3D69D8477DE4}'
+
+$MobilePcSystemType   = 2
+$PortableChassisTypes = @(8, 9, 10, 14, 30, 31, 32)
+$NdisMediumEthernet   = 14
+$VbsRunning           = 2
 
 $ServicesToDisable = @(
     'DiagTrack',
@@ -107,6 +112,9 @@ $ProgressPreference = 'SilentlyContinue'
 $script:SpinnerReady = $false
 try {
     Add-Type -Namespace OwNative -Name Console -MemberDefinition @'
+public const int StdInput = -10, StdOutput = -11;
+public const uint QuickEditMode = 0x40, ExtendedFlags = 0x80;
+
 [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GetStdHandle(int nStdHandle);
 [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
 [DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
@@ -121,7 +129,7 @@ static DateTime clockStart;
 
 static void Put(string text, int x, int y) {
     uint written;
-    WriteConsoleOutputCharacter(GetStdHandle(-11), text, (uint)text.Length, (uint)((y << 16) | x), out written);
+    WriteConsoleOutputCharacter(GetStdHandle(StdOutput), text, (uint)text.Length, (uint)((y << 16) | x), out written);
 }
 
 static void SpinTick(object state) {
@@ -152,11 +160,12 @@ public static void StopSpinner() {
 }
 '@
     $script:SpinnerReady = $true
-    $stdIn = [OwNative.Console]::GetStdHandle(-10)
+    $stdIn = [OwNative.Console]::GetStdHandle([OwNative.Console]::StdInput)
     $mode = [uint32]0
     if ([OwNative.Console]::GetConsoleMode($stdIn, [ref]$mode)) {
-        # Clear ENABLE_QUICK_EDIT_MODE (0x40), keep ENABLE_EXTENDED_FLAGS (0x80) so the change applies.
-        [void][OwNative.Console]::SetConsoleMode($stdIn, [uint32](($mode - ($mode -band 0x40)) -bor 0x80))
+        # ExtendedFlags must be set, or Windows ignores the QuickEdit change.
+        $mode = ($mode - ($mode -band [OwNative.Console]::QuickEditMode)) -bor [OwNative.Console]::ExtendedFlags
+        [void][OwNative.Console]::SetConsoleMode($stdIn, [uint32]$mode)
     }
 } catch { $null = $_ }
 
@@ -200,7 +209,7 @@ function Set-ServiceStartup {
         [switch]$Start
     )
     $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
-    if (-not $svc) { return $false }
+    if (-not $svc) { return (Skip "$Name not installed") }
     if ($Stop -and $svc.Status -ne 'Stopped') { Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue -WarningAction SilentlyContinue }
     try {
         Set-Service -Name $Name -StartupType $Startup -ErrorAction Stop
@@ -209,7 +218,6 @@ function Set-ServiceStartup {
         Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$Name" -Name 'Start' -Value $startValue
     }
     if ($Start) { Start-Service -Name $Name -ErrorAction SilentlyContinue -WarningAction SilentlyContinue }
-    return $true
 }
 
 function Disable-TaskByPath([string]$FullPath) {
@@ -450,7 +458,7 @@ function Show-SelectionFrame([object[]]$Items, [int]$Focus) {
     }
     Write-FrameRow
 
-    $changes = @((Get-SelectedChanges $Items).Values)
+    $changes = @(Get-SelectedChanges $Items | ForEach-Object { $_.Text })
     if ($Focus -lt $Items.Count) {
         $text = $Items[$Focus].Hint
         $color = 'Yellow'
@@ -713,7 +721,7 @@ function Get-SystemInfo {
     $cs  = Get-CimInstance -ClassName Win32_ComputerSystem
     # Not Win32_Battery: a USB UPS shows up as a battery.
     $chassis = @((Get-CimInstance -ClassName Win32_SystemEnclosure -ErrorAction SilentlyContinue).ChassisTypes)
-    $isLaptop = ($cs.PCSystemType -eq 2) -or [bool]($chassis | Where-Object { $_ -in 8, 9, 10, 14, 30, 31, 32 })
+    $isLaptop = ($cs.PCSystemType -eq $MobilePcSystemType) -or [bool]($chassis | Where-Object { $_ -in $PortableChassisTypes })
 
     $gpus = @(Get-CimInstance -ClassName Win32_VideoController | ForEach-Object {
         [pscustomobject]@{
@@ -727,7 +735,7 @@ function Get-SystemInfo {
     $isVm = ($cs.Manufacturer -match 'QEMU|VMware|innotek|Xen|Parallels') -or
             ($cs.Model -match 'Virtual|KVM|VMware|VirtualBox|Q35|i440FX')
 
-    $hasLinux = [bool](Get-Partition -ErrorAction SilentlyContinue | Where-Object { $_.GptType -eq '{0FC63DAF-8483-4772-8E79-3D69D8477DE4}' })
+    $hasLinux = [bool](Get-Partition -ErrorAction SilentlyContinue | Where-Object { $_.GptType -eq $LinuxPartitionGuid })
 
     [pscustomobject]@{
         IsDualCcdX3D = ($cpu.Name -match 'X3D' -and $cpu.NumberOfCores -gt 8)
@@ -877,8 +885,8 @@ function Disable-StartupEntry([string]$Name) {
     Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' $Name $bytes 'Binary'
 }
 
-function Invoke-AppSteps($Selected) {
-    if (-not @($AppIds | Where-Object { $Selected.Contains($_) })) { return }
+function Invoke-AppSteps([string[]]$Apps) {
+    if ($Apps.Count -eq 0) { return }
     Start-Section 'Applications'
 
     Invoke-Step 'winget sources' {
@@ -891,7 +899,7 @@ function Invoke-AppSteps($Selected) {
     }
     if (-not (Get-Command -Name 'winget' -ErrorAction SilentlyContinue)) { return }
 
-    if ($Selected.Firefox) {
+    if ($Apps -contains 'Firefox') {
         $script:FirefoxInstalledNow = $false
         Invoke-Step 'Firefox' {
             Install-WingetPackage 'Mozilla.Firefox.fr'
@@ -900,17 +908,17 @@ function Invoke-AppSteps($Selected) {
         Invoke-Step 'Firefox: uBlock Origin and settings' { Set-FirefoxConfig }
         if ($script:FirefoxInstalledNow) { Invoke-Step 'Firefox: pin to the taskbar' { Add-FirefoxToTaskbar } }
     }
-    if ($Selected.Vlc) {
+    if ($Apps -contains 'Vlc') {
         Invoke-Step 'VLC' {
             Install-WingetPackage 'VideoLAN.VLC'
             Remove-Shortcut @('VLC media player.lnk')
         }
     }
-    if ($Selected.Steam) {
+    if ($Apps -contains 'Steam') {
         Invoke-Step 'Steam' { Install-WingetPackage 'Valve.Steam' }
         Invoke-Step 'Steam: no launch at startup' { Disable-StartupEntry 'Steam' }
     }
-    if ($Selected.Discord) {
+    if ($Apps -contains 'Discord') {
         Invoke-Step 'Discord' { Install-WingetPackage 'Discord.Discord' }
         Invoke-Step 'Discord: no launch at startup' { Disable-StartupEntry 'Discord' }
     }
@@ -1090,7 +1098,7 @@ function Invoke-PowerSteps($Info) {
     }
 
     Invoke-Step 'Network adapter power saving' {
-        $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.NdisPhysicalMedium -eq 14 })
+        $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.NdisPhysicalMedium -eq $NdisMediumEthernet })
         if ($adapters.Count -eq 0) { return (Skip 'no Ethernet adapter') }
         $keywords = @('*EEE', 'EEE', 'AdvancedEEE', 'EnableGreenEthernet', 'GigaLite', 'PowerSavingMode', 'ULPMode')
         $properties = @(foreach ($adapter in $adapters) {
@@ -1273,53 +1281,52 @@ function Get-ChangeItems {
     $firstRun = $null -eq (Get-RegValue $AppPrivacyKey 'LetAppsRunInBackground_ForceAllowTheseApps')
     $items = New-Object System.Collections.Generic.List[object]
     $add = {
-        param($Label, $Hint, [bool]$Current, $OnId, $OnText, $OffId, $OffText)
-        $items.Add(@{ Label = $Label; Hint = $Hint; Current = $Current; Value = ($Current -and -not $firstRun)
-                      OnId = $OnId; OnText = $OnText; OffId = $OffId; OffText = $OffText })
+        param($Id, $Label, $Hint, [bool]$Current, $On, $Off)
+        $items.Add(@{ Id = $Id; Label = $Label; Hint = $Hint; Current = $Current; Value = ($Current -and -not $firstRun); On = $On; Off = $Off })
     }
+    $app = { param($Text) @{ Text = $Text; IsApp = $true } }
 
     if ($firstRun) {
-        & $add 'Firefox + uBlock Origin' 'With the uBlock Origin ad blocker, without telemetry or sponsored content. Pinned to the taskbar.' $false 'Firefox' 'install Firefox' $null $null
-        & $add 'VLC' 'Plays any video or audio file.' $false 'Vlc' 'install VLC' $null $null
-        & $add 'Steam' 'Installed with winget, not launched at startup.' $false 'Steam' 'install Steam' $null $null
-        & $add 'Discord' 'Installed with winget, not launched at startup.' $false 'Discord' 'install Discord' $null $null
+        & $add 'Firefox' 'Firefox + uBlock Origin' 'With the uBlock Origin ad blocker, without telemetry or sponsored content. Pinned to the taskbar.' $false (& $app 'install Firefox') $null
+        & $add 'Vlc' 'VLC' 'Plays any video or audio file.' $false (& $app 'install VLC') $null
+        & $add 'Steam' 'Steam' 'Installed with winget, not launched at startup.' $false (& $app 'install Steam') $null
+        & $add 'Discord' 'Discord' 'Installed with winget, not launched at startup.' $false (& $app 'install Discord') $null
     }
 
-    & $add 'Xbox (Xbox app, Game Pass, Game Bar)' 'Needed for Game Pass. Unchecked: removed, controllers keep working.' (Get-XboxEnabled) 'XboxOn' 'install Xbox' 'XboxOff' 'remove Xbox'
-    & $add 'Printing' 'Print services and PDF/XPS virtual printers. Unchecked: disabled.' (Get-PrintingEnabled) 'PrintingOn' 'enable printing' 'PrintingOff' 'disable printing'
-    & $add 'WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators. Unchecked: disabled.' (Get-VirtualizationEnabled) 'VirtOn' 'enable WSL' 'VirtOff' 'disable WSL'
-    & $add 'Notifications' 'Discord, Steam, Windows Update, Windows Security. Unchecked: no notifications at all.' (Get-NotificationsEnabled) 'NotificationsOn' 'turn on notifications' 'NotificationsOff' 'turn off all notifications'
+    & $add 'Xbox' 'Xbox (Xbox app, Game Pass, Game Bar)' 'Needed for Game Pass. Unchecked: removed, controllers keep working.' (Get-XboxEnabled) `
+        @{ Text = 'install Xbox'; Action = { Enable-Xbox } } `
+        @{ Text = 'remove Xbox'; Action = { Disable-Xbox $script:KeepGameBar } }
+    & $add 'Printing' 'Printing' 'Print services and PDF/XPS virtual printers. Unchecked: disabled.' (Get-PrintingEnabled) `
+        @{ Text = 'enable printing'; Action = { Enable-Printing } } `
+        @{ Text = 'disable printing'; Action = { Disable-Printing } }
+    & $add 'Virtualization' 'WSL / virtualization' 'Docker Desktop, WSL2 and Android emulators. Unchecked: disabled.' (Get-VirtualizationEnabled) `
+        @{ Text = 'enable WSL'; Action = { Enable-Virtualization } } `
+        @{ Text = 'disable WSL'; Action = { Disable-Virtualization } }
+    & $add 'Notifications' 'Notifications' 'Discord, Steam, Windows Update, Windows Security. Unchecked: no notifications at all.' (Get-NotificationsEnabled) `
+        @{ Text = 'turn on notifications'; Action = { Set-Notifications $true } } `
+        @{ Text = 'turn off all notifications'; Action = { Set-Notifications $false } }
 
     $returning = @(Get-ReturningApps)
     if ($returning.Count -gt 0) {
         $names = ($returning | ForEach-Object { $ReturningApps[$_] }) -join ', '
-        & $add "$names (installed again by Windows)" 'Removed by the USB key, installed again since by Windows Update or the Store. Unchecked: removed.' $true $null $null 'ReturningApps' "remove $names"
+        & $add 'ReturningApps' "$names (installed again by Windows)" 'Removed by the USB key, installed again since by Windows Update or the Store. Unchecked: removed.' $true `
+            $null @{ Text = "remove $names"; Action = { Remove-ReturningApps } }
     }
     return $items.ToArray()
 }
 
 function Get-SelectedChanges($Items) {
-    $selected = [ordered]@{}
     foreach ($item in $Items) {
-        if ($item.Value -and -not $item.Current -and $item.OnId) { $selected[$item.OnId] = $item.OnText }
-        if (-not $item.Value -and $item.Current -and $item.OffId) { $selected[$item.OffId] = $item.OffText }
+        if ($item.Value -eq $item.Current) { continue }
+        $change = if ($item.Value) { $item.On } else { $item.Off }
+        if ($change) { [pscustomobject]@{ Id = $item.Id; Text = $change.Text; IsApp = [bool]$change.IsApp; Action = $change.Action } }
     }
-    return $selected
 }
 
-function Invoke-ChangeSteps($Selected, [bool]$KeepGameBar) {
-    $changes = @($Selected.Keys | Where-Object { $_ -notin $AppIds })
-    if ($changes.Count -eq 0) { return }
+function Invoke-ChangeSteps($Changes) {
+    if ($Changes.Count -eq 0) { return }
     Start-Section 'Changes'
-    if ($Selected.XboxOff) { Disable-Xbox -KeepGameBar $KeepGameBar }
-    if ($Selected.XboxOn) { Enable-Xbox }
-    if ($Selected.PrintingOff) { Disable-Printing }
-    if ($Selected.PrintingOn) { Enable-Printing }
-    if ($Selected.VirtOff) { Disable-Virtualization }
-    if ($Selected.VirtOn) { Enable-Virtualization }
-    if ($Selected.NotificationsOff) { Set-Notifications $false }
-    if ($Selected.NotificationsOn) { Set-Notifications $true }
-    if ($Selected.ReturningApps) { Remove-ReturningApps }
+    foreach ($change in $Changes) { & $change.Action }
 }
 
 $displayHelperLoaded = $false
@@ -1409,7 +1416,7 @@ function Get-HealthChecks($Info) {
     $script:Checks = New-Object System.Collections.Generic.List[object]
 
     $dg = Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' -ClassName Win32_DeviceGuard -ErrorAction SilentlyContinue
-    if ($dg -and $dg.VirtualizationBasedSecurityStatus -eq 2) {
+    if ($dg -and $dg.VirtualizationBasedSecurityStatus -eq $VbsRunning) {
         Add-Check 'warn' 'VBS / memory integrity still running' 'Windows Security > Device security > Core isolation: turn off, then restart'
     } else {
         Add-Check 'ok' 'VBS disabled'
@@ -1487,16 +1494,17 @@ function Start-Run {
     $info = Get-SystemInfo
     $items = @(Get-ChangeItems)
     if (-not (Read-Selection $items)) { exit 0 }
-    $selected = Get-SelectedChanges $items
+    $changes = @(Get-SelectedChanges $items)
 
-    $keepGameBar = $false
-    if ($selected.XboxOff -and $info.IsDualCcdX3D) {
-        $keepGameBar = Read-FrameYesNo 'KEEP THE GAME BAR?' @('Your X3D processor uses the Game Bar to send games to the right CCD.')
+    $xbox = $items | Where-Object { $_.Id -eq 'Xbox' }
+    $script:KeepGameBar = $false
+    if ($info.IsDualCcdX3D -and $xbox.Current -and -not $xbox.Value) {
+        $script:KeepGameBar = Read-FrameYesNo 'KEEP THE GAME BAR?' @('Your X3D processor uses the Game Bar to send games to the right CCD.')
     }
 
     Invoke-Run {
-        Invoke-AppSteps $selected
-        Invoke-ChangeSteps $selected $keepGameBar
+        Invoke-AppSteps @($changes | Where-Object { $_.IsApp } | ForEach-Object { $_.Id })
+        Invoke-ChangeSteps @($changes | Where-Object { -not $_.IsApp })
         Invoke-PrivacySteps
         Invoke-AiSteps
         Invoke-SystemSteps $info
