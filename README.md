@@ -1,9 +1,6 @@
 # Installer et optimiser Windows 11 proprement
 
-Une installation de Windows 11 sans compte Microsoft ni applications inutiles, accompagnée d'un script qui applique uniquement les réglages qui ont un effet réel : moins de processus, moins de mémoire utilisée, une latence plus faible, et surtout aucune optimisation risquée. Xbox, l'impression et la virtualisation peuvent être désactivées ou réactivées avec le script.
-
-> [!WARNING]
-> L'installation efface le disque choisi. Sauvegardez vos fichiers avant de commencer.
+Une installation de Windows 11 sans compte Microsoft ni applications inutiles, accompagnée d'un script qui applique uniquement des réglages qui ont un effet réel : moins de processus, moins de mémoire utilisée, une latence plus faible, et aucune optimisation risquée. 
 
 ## 1. Préparer la clé USB
 
@@ -11,10 +8,10 @@ Une installation de Windows 11 sans compte Microsoft ni applications inutiles, a
 2. Télécharger l'outil Microsoft : [Créer un support d'installation de Windows 11](https://www.microsoft.com/fr-fr/software-download/windows11).
 3. Lancer l'outil et créer la clé USB (8 Go minimum, son contenu est effacé).
 4. Copier les fichiers `autounattend.xml` et `setup.cmd` à la racine de la clé, sans les renommer.
-5. PC fixe avec plusieurs disques : débrancher tous les disques sauf celui qui recevra Windows.
+5. Si vous avez peur de vous tromper pendant l'installation, débranchez tous les disques sauf celui qui recevra Windows.
 
 > [!TIP]
-> En cas de réinstallation, notez d'abord votre clé Windows. Ouvrir **Terminal** et lancer :
+> En cas de réinstallation, notez d'abord votre clé Windows. Ouvrez l'application **Terminal** et lancez :
 >
 > ```powershell
 > (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
@@ -24,11 +21,10 @@ Une installation de Windows 11 sans compte Microsoft ni applications inutiles, a
 
 1. Brancher la clé et démarrer dessus : menu de démarrage avec <kbd>F8</kbd>, <kbd>F11</kbd> ou <kbd>F12</kbd> selon la marque, ou ordre de démarrage dans le BIOS.
 2. Si l'installation demande une édition, choisir celle de votre licence (Famille ou Pro).
-3. Supprimer toutes les partitions du disque qui recevra Windows, sélectionner l'espace non alloué, puis **Suivant**. Vérifiez deux fois qu'il s'agit du **bon** disque.
+3. Supprimer TOUTES les partitions du disque qui recevra Windows, sélectionner l'espace non alloué, puis **Suivant**. Vérifiez qu'il s'agit du **bon** disque !
 4. Se connecter au Wi-Fi si besoin, puis créer le compte local (nom et mot de passe).
-5. Rebrancher les autres disques une fois sur le Bureau.
 
-Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, puis entrer votre clé.
+Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, puis entrez votre clé.
 
 > [!TIP]
 > Carte réseau non reconnue : branchez votre téléphone en USB et activez le partage de connexion le temps d'installer les pilotes.
@@ -39,11 +35,8 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 2. Installer les pilotes :
    - **Chipset** : [AMD](https://www.amd.com/fr/support/download/drivers.html) ou [Intel](https://www.intel.fr/content/www/fr/fr/support/detect.html).
    - **Carte graphique** : [NVIDIA App](https://www.nvidia.com/fr-fr/software/nvidia-app/) ou [AMD Adrenalin](https://www.amd.com/fr/support/download/drivers.html).
-   - **Réseau et audio** : sur le site du fabricant de votre carte mère. Pour connaître son modèle, ouvrir **Terminal** et lancer `Get-CimInstance Win32_BaseBoard` (ligne `Product`).
+   - **Réseau et audio** : sur le site du fabricant de votre carte mère. Pour connaître son modèle, ouvrir **Terminal** et lancer `Get-CimInstance Win32_BaseBoard` (ligne `Product`). Installez uniquement les pilotes, pas les utilitaires du fabricant.
 3. Redémarrer.
-
-> [!NOTE]
-> Installez uniquement les pilotes, pas les utilitaires du fabricant (centres de contrôle, RGB, "boosters").
 
 ## 4. Lancer le script
 
@@ -67,18 +60,17 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
   Up/Down: move   Space: check/uncheck   Enter: confirm
 ```
 
-3. Laisser le script travailler quelques minutes. Chaque étape s'affiche avec son résultat, et les échecs éventuels sont rappelés à la fin.
+3. Chaque étape s'affiche avec son résultat, et les échecs éventuels sont rappelés à la fin.
 4. Redémarrer le PC.
 
 <details>
 <summary>Ce que fait le script</summary>
 
-- **Applications** : Firefox avec uBlock Origin, VLC et 7-Zip, installés s'ils manquent. Steam et Discord si cochés, sans lancement au démarrage de Windows.
+- **Applications** : Firefox avec uBlock Origin, VLC et 7-Zip. Steam et Discord si cochés, sans lancement au démarrage de Windows.
 - **Confidentialité** : télémétrie, publicité ciblée, rapport d'erreurs, Copilot, Recall et résultats web de la recherche coupés.
 - **Système** : services inutiles arrêtés, applications en arrière-plan coupées, hibernation désactivée.
 - **Latence** (PC fixe) : mode d'alimentation « Meilleures performances », économies d'énergie désactivées.
 - **Jeu** : optimisations pour les jeux en fenêtre activées, enregistrement en arrière-plan coupé.
-- **Edge** : conservé, mais plus aucun processus en arrière-plan.
 - **Au choix** : Xbox, impression, WSL / virtualisation, OneDrive et notifications se désactivent ou se réactivent en cochant leur ligne. Les applications retirées par la clé USB et réinstallées depuis par Windows (Outlook, Copilot, Teams…) apparaissent aussi dans la liste.
 
 </details>
@@ -98,8 +90,8 @@ Les bons réglages dépendent de vos jeux et de vos préférences. Ces vidéos e
 ## 6. Bonnes pratiques
 
 - Pas d'overclocking manuel (activer le profil EXPO/XMP de la RAM est OK) : l'undervolting apporte bien plus, en températures, en durée de vie des composants et même en performances.
-- Pas de logiciel de nettoyage ou d'optimisation (CCleaner et autres).
-- Pas d'antivirus en plus : Microsoft Defender suffit.
+- Pas de logiciel de nettoyage ou d'optimisation (CCleaner ou autre).
+- Pas d'antivirus : Microsoft Defender suffit.
 - Garder Windows et les pilotes à jour.
 
 ## 7. À tester soi-même
