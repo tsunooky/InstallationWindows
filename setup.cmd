@@ -1311,8 +1311,8 @@ function Get-ChangeItems($Info) {
            Hint = 'Installed with winget, not launched at startup.'
            On = @{ Text = 'install Steam'; IsApp = $true; Action = { Install-AppWithoutStartup 'Steam' 'Valve.Steam' } } }
         @{ Program = 'Discord'; Label = 'Discord'
-           Hint = 'Installed with winget, not launched at startup.'
-           On = @{ Text = 'install Discord'; IsApp = $true; Action = { Install-AppWithoutStartup 'Discord' 'Discord.Discord' } } }
+           Hint = 'Installed with winget.'
+           On = @{ Text = 'install Discord'; IsApp = $true; Action = { Invoke-Step 'Discord' { Install-WingetPackage 'Discord.Discord' } } } }
     )
     $programs = @(Get-InstalledProgramNames)
 
