@@ -1224,6 +1224,16 @@ function Invoke-InterfaceSteps {
     Invoke-Step 'Volume reduction during calls' {
         Set-RegValue 'HKCU:\Software\Microsoft\Multimedia\Audio' 'UserDuckingPreference' 3
     }
+
+    Invoke-Step 'Lock screen picture also shown at startup' {
+        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $logonCopy = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\Creative\$sid"
+        foreach ($name in 'RotatingLockScreenEnabled', 'RotatingLockScreenOverlayEnabled') {
+            Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager' $name 0
+        }
+        if (-not (Test-Path -LiteralPath $logonCopy)) { return (Skip 'no LogonUI copy for this account') }
+        foreach ($name in 'RotatingLockScreenEnabled', 'RotatingLockScreenOverlayEnabled') { Set-RegValue $logonCopy $name 0 }
+    }
 }
 
 function Get-NotificationsEnabled {
