@@ -50,6 +50,9 @@ $XboxPackages = @(
     'Microsoft.Edge.GameAssist'
 )
 
+$GameBarProtocols    = @('ms-gamebar', 'ms-gamebarservices', 'ms-gamingoverlay')
+$ProtocolSinkCommand = '"{0}"' -f (Join-Path $env:SystemRoot 'System32\systray.exe')
+
 $XboxStoreIds = [ordered]@{
     'Xbox'          = '9MV0B5HZVK9Z'
     'Xbox Game Bar' = '9NZKPSTSNW4P'
@@ -62,6 +65,10 @@ $ReturningApps = [ordered]@{
     'MSTeams'                      = 'Teams'
     'Microsoft.Windows.DevHome'    = 'Dev Home'
 }
+
+$OneDriveProgram       = 'Microsoft OneDrive*'
+$OneDriveSetupRunValue = 'OneDriveSetup'
+$RunKey                = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 
 $PrintingFeatures      = @('Printing-PrintToPDFServices-Features', 'Printing-XPSServices-Features')
 $VirtualizationEnable  = @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform', 'HypervisorPlatform')
@@ -805,13 +812,35 @@ function Get-ReturningApps {
     return @($ReturningApps.Keys | Where-Object { $installed -contains $_ })
 }
 
-function Get-InstalledProgramNames {
+function Get-InstalledPrograms {
     $keys = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
     )
-    return @(Get-ItemProperty -Path $keys -ErrorAction SilentlyContinue | ForEach-Object { $_.DisplayName } | Where-Object { $_ })
+    return @(Get-ItemProperty -Path $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName })
+}
+
+function Get-InstalledProgramNames {
+    return @(Get-InstalledPrograms | ForEach-Object { $_.DisplayName })
+}
+
+function Test-OneDriveBack {
+    $accounts = @(Get-ChildItem -Path 'HKCU:\Software\Microsoft\OneDrive\Accounts' -ErrorAction SilentlyContinue | Where-Object { $_.GetValue('UserEmail') })
+    if ($accounts.Count -gt 0) { return $false }
+    if (@(Get-InstalledProgramNames) -like $OneDriveProgram) { return $true }
+    return ($null -ne (Get-RegValue $RunKey $OneDriveSetupRunValue))
+}
+
+function Uninstall-OneDrive {
+    Get-Process -Name 'OneDrive' -ErrorAction SilentlyContinue | Stop-Process -Force
+    foreach ($program in @(Get-InstalledPrograms | Where-Object { $_.DisplayName -like $OneDriveProgram })) {
+        if ($program.UninstallString -notmatch '^"([^"]+)"\s*(.*)$') { throw "unexpected OneDrive uninstall command: $($program.UninstallString)" }
+        $file = $Matches[1]
+        $arguments = @($Matches[2] -split '\s+' | Where-Object { $_ })
+        Invoke-Native -File $file -Arguments $arguments
+    }
+    Remove-ItemProperty -LiteralPath $RunKey -Name $OneDriveSetupRunValue -ErrorAction SilentlyContinue
 }
 
 function Assert-Winget {
@@ -1140,6 +1169,21 @@ function Invoke-PowerSteps($Info) {
     }
 }
 
+function Set-GameBarProtocolSink([bool]$Enabled) {
+    foreach ($protocol in $GameBarProtocols) {
+        $key = "HKLM:\SOFTWARE\Classes\$protocol"
+        $command = "$key\shell\open\command"
+        if ($Enabled) {
+            Set-RegValue $key '(default)' "URL:$protocol" 'String'
+            Set-RegValue $key 'URL Protocol' '' 'String'
+            Set-RegValue $key 'NoOpenWith' '' 'String'
+            Set-RegValue $command '(default)' $ProtocolSinkCommand 'String'
+        } elseif ((Get-RegValue $command '(default)') -eq $ProtocolSinkCommand) {
+            Remove-Item -LiteralPath "$key\shell" -Recurse -Force
+        }
+    }
+}
+
 function Invoke-GamingSteps {
     Start-Section 'Gaming and display'
 
@@ -1163,6 +1207,16 @@ function Invoke-GamingSteps {
         Set-RegValue 'HKCU:\System\GameConfigStore' 'GameDVR_Enabled' 0
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR' 'AppCaptureEnabled' 0
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR' 'HistoricalCaptureEnabled' 0
+    }
+
+    Invoke-Step 'Xbox controller button without Game Bar' {
+        if (Get-AppxPackage -Name $GameBarPackage -ErrorAction SilentlyContinue) {
+            Set-GameBarProtocolSink $false
+            return (Skip 'Game Bar installed')
+        }
+        if (-not (Test-Path -LiteralPath $ProtocolSinkCommand.Trim('"'))) { return (Skip 'systray.exe not found') }
+        Set-RegValue 'HKCU:\Software\Microsoft\GameBar' 'UseNexusForGameBarEnabled' 0
+        Set-GameBarProtocolSink $true
     }
 }
 
@@ -1262,11 +1316,6 @@ function Disable-Xbox([switch]$KeepGameBar) {
         $targets = @($XboxPackages | Where-Object { -not ($KeepGameBar -and $_ -eq $GameBarPackage) })
         Uninstall-StoreApp $targets
     }
-    if (-not $KeepGameBar) {
-        Invoke-Step 'Xbox controller button: no Game Bar' {
-            Set-RegValue 'HKCU:\Software\Microsoft\GameBar' 'UseNexusForGameBarEnabled' 0
-        }
-    }
 }
 
 function Enable-Xbox {
@@ -1307,6 +1356,10 @@ function Enable-Virtualization {
 
 function Remove-ReturningApps {
     Invoke-Step 'Remove apps installed again' { Uninstall-StoreApp @(Get-ReturningApps) }
+    Invoke-Step 'Remove OneDrive' {
+        if (-not (Test-OneDriveBack)) { return (Skip 'OneDrive not installed again') }
+        Uninstall-OneDrive
+    }
 }
 
 function Get-ChangeItems($Info) {
@@ -1333,8 +1386,9 @@ function Get-ChangeItems($Info) {
         $removeXbox = @{ Text = 'remove Xbox (Game Bar kept)'; Action = { Disable-Xbox -KeepGameBar } }
     }
 
-    $returning = @(Get-ReturningApps)
-    $returningNames = ($returning | ForEach-Object { $ReturningApps[$_] }) -join ', '
+    $returning = @(Get-ReturningApps | ForEach-Object { $ReturningApps[$_] })
+    if (Test-OneDriveBack) { $returning += 'OneDrive' }
+    $returningNames = $returning -join ', '
 
     $items = @(
         foreach ($app in $apps) { if (-not ($programs -like $app.Program)) { $app } }
@@ -1351,8 +1405,8 @@ function Get-ChangeItems($Info) {
            On = @{ Text = 'turn on notifications'; Action = { Set-Notifications $true } }
            Off = @{ Text = 'turn off all notifications'; Action = { Set-Notifications $false } } }
         if ($returning.Count -gt 0) {
-            @{ Label = "$returningNames (installed again by Windows)"; Current = $true
-               Hint = 'Removed by the USB key, installed again since by Windows Update or the Store. Unchecked: removed.'
+            @{ Label = "$returningNames (installed again by Windows)"; Current = $true; StartUnchecked = $true
+               Hint = 'Removed by the USB key, installed again since by a Windows update or the Store. Unchecked: removed. Check to keep.'
                Off = @{ Text = "remove $returningNames"; Action = { Remove-ReturningApps } } }
         }
     )
@@ -1360,7 +1414,7 @@ function Get-ChangeItems($Info) {
     $firstRun = $null -eq (Get-RegValue $AppPrivacyKey 'LetAppsRunInBackground_ForceAllowTheseApps')
     foreach ($item in $items) {
         $item.Current = [bool]$item.Current
-        $item.Value = $item.Current -and -not $firstRun
+        $item.Value = $item.Current -and -not $firstRun -and -not $item.StartUnchecked
     }
     return $items
 }

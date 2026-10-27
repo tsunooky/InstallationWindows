@@ -78,6 +78,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 - **Latence** (PC fixe) : mode d'alimentation « Meilleures performances », économies d'énergie désactivées.
 - **Jeu** : optimisations pour les jeux en fenêtre activées, enregistrement en arrière-plan coupé.
 - **Au choix** : Xbox, impression, WSL / virtualisation et notifications restent actifs si leur ligne est cochée, et sont retirés ou désactivés sinon.
+- **Après une grosse mise à jour de Windows** : si elle a réinstallé des applications retirées par la clé (Copilot, OneDrive…), le script propose de les retirer à nouveau. Cochez leur ligne pour les garder.
 
 </details>
 
