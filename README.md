@@ -1,6 +1,6 @@
 # Installer et optimiser Windows 11 proprement
 
-Une installation de Windows 11 sans compte Microsoft ni applications inutiles, accompagnée d'un script qui applique uniquement des réglages qui ont un effet réel : moins de processus, moins de mémoire utilisée, une latence plus faible, et aucune optimisation risquée. 
+Une installation de Windows 11 sans compte Microsoft ni applications inutiles, accompagnée d'un script qui applique uniquement des réglages qui ont un effet réel : moins de processus, moins de mémoire utilisée et une latence plus faible.
 
 ## 1. Préparer la clé USB
 
@@ -41,7 +41,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 ## 4. Lancer le script
 
 1. Ouvrez la clé USB et executez `setup.cmd`, puis acceptez la demande d'autorisation.
-2. Cochez ce que vous utilisez avec <kbd>Entrée</kbd>, puis descendre sur **START** et appuyer sur <kbd>Entrée</kbd>. Ce qui n'est pas coché est retiré ou désactivé pour optimiser les performances au coût de fonctionnalités. Toute action est **réversible** depuis la même interface !
+2. Cochez ce que vous utilisez avec <kbd>Entrée</kbd>, puis descendre sur **START** et appuyer sur <kbd>Entrée</kbd>. Ce qui n'est pas coché est retiré ou désactivé pour optimiser les performances au coût de fonctionnalités. Chaque ligne de cette liste est **réversible** depuis la même interface. Les autres réglages du script (voir « Ce que fait le script ») sont appliqués à chaque lancement et ne s'annulent pas depuis l'interface.
 
 ```
 ╭─ Windows Optimization ─────────────────────────────────────────────────────╮
@@ -78,6 +78,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 - **Latence** (PC fixe) : mode d'alimentation « Meilleures performances », économies d'énergie désactivées.
 - **Jeu** : optimisations pour les jeux en fenêtre activées, enregistrement en arrière-plan coupé.
 - **Au choix** : Xbox, impression, WSL / virtualisation et notifications restent actifs si leur ligne est cochée, et sont retirés ou désactivés sinon.
+- **Sécurité** : Defender, le contrôle de compte d'utilisateur, SmartScreen et Windows Update restent actifs. Seule exception : l'intégrité de la mémoire (isolation du noyau) est désactivée dès l'installation par la clé, car elle réduit les performances en jeu. Pour la réactiver, cocher **WSL / virtualization** dans le script, puis **Sécurité Windows** > **Sécurité de l'appareil** > **Isolation du noyau**, et redémarrer.
 - **Après une grosse mise à jour de Windows** : si elle a réinstallé des applications retirées par la clé (Copilot, OneDrive…), le script propose de les retirer à nouveau. Cochez leur ligne pour les garder.
 
 </details>
@@ -96,26 +97,9 @@ Les bons réglages dépendent de vos jeux et de vos préférences. Ces vidéos e
 - Pas de logiciel de nettoyage ou d'optimisation (CCleaner ou autre).
 - Pas d'antivirus : Microsoft Defender suffit.
 - Garder Windows et les pilotes à jour.
-- Pas d'overclocking manuel : l'undervolting apporte plus en températures, en durée de vie des composants et même en performances.
+- Pas d'overclocking manuel. En cas d'undervolting, tester la stabilité avant de le garder : un réglage instable provoque des plantages.
 
-## 7. À tester soi-même
-
-<details>
-<summary>Afficher le réglage à tester</summary>
-
-Ce réglage donne des résultats différents selon le processeur et le jeu. Mesurez le FPS moyen et le 1 % low avant et après, et revenez en arrière s'il n'y a pas de gain.
-
-### Écarter le cœur 0 du jeu
-
-1. Lancer le jeu, puis ouvrir le **Gestionnaire des tâches** > **Détails**.
-2. Clic droit sur le jeu > **Définir l'affinité**.
-3. Décocher les **deux** premiers processeurs (le cœur 0 et son deuxième thread).
-
-À refaire à chaque lancement du jeu, ou à automatiser avec Process Lasso.
-
-</details>
-
-## 8. Optionnel
+## 7. Optionnel
 
 <details>
 <summary>Afficher l'installation de WSL2</summary>
