@@ -44,19 +44,13 @@ $GameBarPackage = 'Microsoft.XboxGamingOverlay'
 $XboxPackages = @(
     $XboxAppPackage,
     'Microsoft.GamingServices',
-    $GameBarPackage,
     'Microsoft.XboxGameOverlay',
     'Microsoft.XboxSpeechToTextOverlay',
     'Microsoft.Edge.GameAssist'
 )
 
-$GameBarProtocols    = @('ms-gamebar', 'ms-gamebarservices', 'ms-gamingoverlay')
-$ProtocolSinkCommand = '"{0}"' -f (Join-Path $env:SystemRoot 'System32\systray.exe')
-
-$XboxStoreIds = [ordered]@{
-    'Xbox'          = '9MV0B5HZVK9Z'
-    'Xbox Game Bar' = '9NZKPSTSNW4P'
-}
+$XboxStoreId    = '9MV0B5HZVK9Z'
+$GameBarStoreId = '9NZKPSTSNW4P'
 
 $ReturningApps = [ordered]@{
     'Microsoft.OutlookForWindows'  = 'Outlook'
@@ -1081,7 +1075,9 @@ function Invoke-SystemSteps($Info) {
 
     Invoke-Step 'Background apps' {
         $allowed = @('Microsoft.SecHealthUI_8wekyb3d8bbwe')
-        foreach ($name in $XboxAppPackage, $GameBarPackage) {
+        $names = @($XboxAppPackage)
+        if ($Info.IsDualCcdX3D) { $names += $GameBarPackage }
+        foreach ($name in $names) {
             if (Get-AppxPackage -Name $name -ErrorAction SilentlyContinue) { $allowed += "${name}_8wekyb3d8bbwe" }
         }
         Set-RegValue $AppPrivacyKey 'LetAppsRunInBackground' 2
@@ -1167,21 +1163,6 @@ function Invoke-PowerSteps($Info) {
     }
 }
 
-function Set-GameBarProtocolSink([bool]$Enabled) {
-    foreach ($protocol in $GameBarProtocols) {
-        $key = "HKLM:\SOFTWARE\Classes\$protocol"
-        $command = "$key\shell\open\command"
-        if ($Enabled) {
-            Set-RegValue $key '(default)' "URL:$protocol" 'String'
-            Set-RegValue $key 'URL Protocol' '' 'String'
-            Set-RegValue $key 'NoOpenWith' '' 'String'
-            Set-RegValue $command '(default)' $ProtocolSinkCommand 'String'
-        } elseif ((Get-RegValue $command '(default)') -eq $ProtocolSinkCommand) {
-            Remove-Item -LiteralPath "$key\shell" -Recurse -Force
-        }
-    }
-}
-
 function Invoke-GamingSteps {
     Start-Section 'Gaming and display'
 
@@ -1207,14 +1188,17 @@ function Invoke-GamingSteps {
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR' 'HistoricalCaptureEnabled' 0
     }
 
-    Invoke-Step 'Xbox controller button without Game Bar' {
-        if (Get-AppxPackage -Name $GameBarPackage -ErrorAction SilentlyContinue) {
-            Set-GameBarProtocolSink $false
-            return (Skip 'Game Bar installed')
-        }
-        if (-not (Test-Path -LiteralPath $ProtocolSinkCommand.Trim('"'))) { return (Skip 'systray.exe not found') }
+    Invoke-Step 'Game Bar (Win+Alt+B toggles HDR)' {
+        if (Get-AppxPackage -Name $GameBarPackage -ErrorAction SilentlyContinue) { return (Skip 'already installed') }
+        Install-WingetPackage -Id $GameBarStoreId -Source 'msstore'
+    }
+
+    Invoke-Step 'Game Bar: no Win+G, controller button or tips' {
         Set-RegValue 'HKCU:\Software\Microsoft\GameBar' 'UseNexusForGameBarEnabled' 0
-        Set-GameBarProtocolSink $true
+        Set-RegValue 'HKCU:\Software\Microsoft\GameBar' 'ShowStartupPanel' 0
+        $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+        $disabled = [string](Get-RegValue $key 'DisabledHotkeys')
+        if ($disabled -notmatch 'G') { Set-RegValue $key 'DisabledHotkeys' ($disabled + 'G') 'String' }
     }
 }
 
@@ -1309,21 +1293,12 @@ function Invoke-NotificationSteps {
     }
 }
 
-function Disable-Xbox([switch]$KeepGameBar) {
-    Invoke-Step 'Remove Xbox apps' {
-        $targets = @($XboxPackages | Where-Object { -not ($KeepGameBar -and $_ -eq $GameBarPackage) })
-        Uninstall-StoreApp $targets
-    }
+function Disable-Xbox {
+    Invoke-Step 'Remove Xbox apps' { Uninstall-StoreApp $XboxPackages }
 }
 
 function Enable-Xbox {
-    foreach ($entry in $XboxStoreIds.GetEnumerator()) {
-        $id = $entry.Value
-        Invoke-Step ('Install {0}' -f $entry.Key) { Install-WingetPackage -Id $id -Source 'msstore' }
-    }
-    Invoke-Step 'Xbox controller button: Game Bar' {
-        Set-RegValue 'HKCU:\Software\Microsoft\GameBar' 'UseNexusForGameBarEnabled' 1
-    }
+    Invoke-Step 'Install Xbox' { Install-WingetPackage -Id $XboxStoreId -Source 'msstore' }
 }
 
 function Disable-Printing {
@@ -1360,7 +1335,7 @@ function Remove-ReturningApps {
     }
 }
 
-function Get-ChangeItems($Info) {
+function Get-ChangeItems {
     $apps = @(
         @{ Program = 'Mozilla Firefox*'; Label = 'Firefox + uBlock Origin'
            Hint = 'With the uBlock Origin ad blocker, without telemetry or sponsored content. Pinned to the taskbar.'
@@ -1377,22 +1352,16 @@ function Get-ChangeItems($Info) {
     )
     $programs = @(Get-InstalledProgramNames)
 
-    $xboxHint = 'Needed for Game Pass. Unchecked: removed, controllers keep working.'
-    $removeXbox = @{ Text = 'remove Xbox'; Action = { Disable-Xbox } }
-    if ($Info.IsDualCcdX3D) {
-        $xboxHint = 'Needed for Game Pass. Unchecked: removed, except the Game Bar that your X3D processor uses to run games on the right CCD.'
-        $removeXbox = @{ Text = 'remove Xbox (Game Bar kept)'; Action = { Disable-Xbox -KeepGameBar } }
-    }
-
     $returning = @(Get-ReturningApps | ForEach-Object { $ReturningApps[$_] })
     if (Test-OneDriveBack) { $returning += 'OneDrive' }
     $returningNames = $returning -join ', '
 
     $items = @(
         foreach ($app in $apps) { if (-not ($programs -like $app.Program)) { $app } }
-        @{ Label = 'Xbox (Xbox app, Game Pass, Game Bar)'; Hint = $xboxHint; Current = (Get-XboxEnabled)
+        @{ Label = 'Xbox (Xbox app, Game Pass)'; Current = (Get-XboxEnabled)
+           Hint = 'Needed for Game Pass. Unchecked: removed, the Game Bar and controllers keep working.'
            On = @{ Text = 'install Xbox'; Action = { Enable-Xbox } }
-           Off = $removeXbox }
+           Off = @{ Text = 'remove Xbox'; Action = { Disable-Xbox } } }
         @{ Label = 'Printing'; Hint = 'Print services and PDF/XPS virtual printers. Unchecked: disabled.'; Current = (Get-PrintingEnabled)
            On = @{ Text = 'enable printing'; Action = { Enable-Printing } }
            Off = @{ Text = 'disable printing'; Action = { Disable-Printing } } }
@@ -1504,7 +1473,7 @@ function Start-Run {
 
     Show-Loading
     $info = Get-SystemInfo
-    $items = @(Get-ChangeItems $info)
+    $items = @(Get-ChangeItems)
     if (-not (Read-Selection $items)) { exit 0 }
     $changes = @(Get-SelectedChanges $items)
 

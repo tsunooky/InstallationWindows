@@ -51,7 +51,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 │    [ ] VLC                                                                 │
 │    [ ] Steam                                                               │
 │    [ ] Discord                                                             │
-│    [ ] Xbox (Xbox app, Game Pass, Game Bar)                                │
+│    [ ] Xbox (Xbox app, Game Pass)                                          │
 │    [ ] Printing                                                            │
 │    [ ] WSL / virtualization                                                │
 │    [ ] Notifications                                                       │
@@ -76,7 +76,7 @@ Si Windows n'est pas activé : **Paramètres** > **Système** > **Activation**, 
 - **Confidentialité** : télémétrie, publicité ciblée, rapport d'erreurs, Copilot, Recall et résultats web de la recherche coupés.
 - **Système** : services inutiles arrêtés, applications en arrière-plan coupées, hibernation désactivée.
 - **Latence** (PC fixe) : mode d'alimentation « Meilleures performances », économies d'énergie désactivées.
-- **Jeu** : optimisations pour les jeux en fenêtre activées, enregistrement en arrière-plan coupé.
+- **Jeu** : optimisations pour les jeux en fenêtre activées, enregistrement en arrière-plan coupé. La Game Bar est gardée pour activer ou désactiver l'HDR avec <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd>, mais <kbd>Win</kbd>+<kbd>G</kbd> et le bouton Xbox de la manette ne l'ouvrent plus.
 - **Au choix** : Xbox, impression, WSL / virtualisation et notifications restent actifs si leur ligne est cochée, et sont retirés ou désactivés sinon.
 - **Sécurité** : Defender, le contrôle de compte d'utilisateur, SmartScreen et Windows Update restent actifs. Seule exception : l'intégrité de la mémoire (isolation du noyau) est désactivée dès l'installation par la clé, car elle réduit les performances en jeu. Pour la réactiver, cocher **WSL / virtualization** dans le script, puis **Sécurité Windows** > **Sécurité de l'appareil** > **Isolation du noyau**, et redémarrer.
 - **Après une grosse mise à jour de Windows** : si elle a réinstallé des applications retirées par la clé (Copilot, OneDrive…), le script propose de les retirer à nouveau. Cochez leur ligne pour les garder.
