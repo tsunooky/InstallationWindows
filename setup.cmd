@@ -1103,9 +1103,7 @@ function Invoke-SystemSteps($Info) {
     Invoke-Step 'Cross-device resume and connected devices' {
         $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
         Set-RegValue $key 'EnableCdp' 0
-        Set-RegValue $key 'EnableActivityFeed' 0
         Set-RegValue $key 'PublishUserActivities' 0
-        Set-RegValue $key 'UploadUserActivities' 0
         Set-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CrossDeviceResume\Configuration' 'IsResumeAllowed' 0
     }
 
